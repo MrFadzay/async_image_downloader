@@ -15,7 +15,6 @@ from PIL import Image, ImageEnhance
 import questionary
 
 
-
 def get_base_dir():
     """
     Получает базовую директорию.
@@ -345,7 +344,8 @@ async def run_interactive_mode():
                     default="manual_downloads"
                 ).ask_async()
                 if urls_str and dest_folder:
-                    urls = [url for url in re.split(r'[\s;]+', urls_str.strip()) if url]
+                    urls = [url for url in re.split(
+                        r'[\s;]+', urls_str.strip()) if url]
                     await download_images_for_folder(dest_folder, urls)
 
         elif command == "Найти и переименовать дубликаты":
