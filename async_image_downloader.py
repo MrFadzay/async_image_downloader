@@ -50,8 +50,17 @@ semaphore = asyncio.Semaphore(10)
 
 async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Path, file_index: int):
     async with semaphore:
-        new_filename = f"{file_index}.jpeg"
+        # Базовое имя файла
+        base_filename = f"{file_index}"
+        new_filename = f"{base_filename}.jpeg"
         full_path = target_dir / new_filename
+
+        # Проверка на существование файла и изменение имени при необходимости
+        counter = 1
+        while await aiofiles.os.path.exists(full_path):
+            new_filename = f"{base_filename}.{counter}.jpeg"
+            full_path = target_dir / new_filename
+            counter += 1
 
         try:
             async with session.get(url) as response:
@@ -86,13 +95,22 @@ async def create_dir(dir_name: Path) -> None:
     )
 
 
-def _calculate_perceptual_hash_sync(filepath: Path) -> str | None:
-    """Синхронная функция для вычисления перцептивного хеша."""
+def _calculate_perceptual_hash_sync(
+    filepath: Path
+) -> tuple[str, str, str] | None:
+    """
+    Синхронная функция для вычисления нескольких перцептивных хешей.
+    Возвращает кортеж из трех хешей: phash, dhash и average_hash для более
+    точного определения дубликатов.
+    """
     try:
-        image = Image.open(filepath)
-        # Используем phash, так как он более устойчив к мелким изменениям,
-        # что делает его хорошим кандидатом для проверки дубликатов.
-        return str(imagehash.phash(image))
+        image = Image.open(filepath).convert("RGB")
+        # Используем комбинацию из трех разных алгоритмов хеширования
+        # для повышения точности определения дубликатов
+        p_hash = str(imagehash.phash(image))
+        d_hash = str(imagehash.dhash(image))
+        a_hash = str(imagehash.average_hash(image))
+        return (p_hash, d_hash, a_hash)
     except Exception as e:
         logger.error(f"Ошибка при вычислении хеша для '{filepath}': {e}")
         return None
@@ -135,8 +153,11 @@ def _modify_add_noise(image: Image.Image) -> Image.Image:
     return image
 
 
-async def _get_file_hashes(directory: Path) -> tuple[dict[str, Path], list[tuple[Path, str, Path]]]:
-    """Асинхронно вычисляет перцептивные хеши для всех файлов в директории."""
+async def _get_file_hashes(directory: Path) -> tuple[dict[tuple[str, str, str], Path], list[tuple[Path, tuple[str, str, str], Path]]]:
+    """
+    Асинхронно вычисляет перцептивные хеши для всех файлов в директории.
+    Теперь использует комбинацию из трех хешей для более точного определения дубликатов.
+    """
     loop = asyncio.get_running_loop()
     filepaths_to_process = []
 
@@ -151,15 +172,33 @@ async def _get_file_hashes(directory: Path) -> tuple[dict[str, Path], list[tuple
     ]
     hashes_results = await asyncio.gather(*tasks)
 
-    perceptual_hashes: dict[str, Path] = {}
+    # Словарь для хранения хешей и соответствующих им путей
+    perceptual_hashes: dict[tuple[str, str, str], Path] = {}
     duplicates = []
-    for path, p_hash in zip(filepaths_to_process, hashes_results):
-        if not p_hash:
+
+    # Порог сходства для определения дубликатов (количество совпадающих хешей)
+    similarity_threshold = 2  # Если 2 из 3 хешей совпадают, считаем изображения дубликатами
+
+    for path, hashes in zip(filepaths_to_process, hashes_results):
+        if not hashes:
             continue
-        if p_hash in perceptual_hashes:
-            duplicates.append((path, p_hash, perceptual_hashes[p_hash]))
-        else:
-            perceptual_hashes[p_hash] = path
+
+        # Проверяем, есть ли уже похожие хеши в нашем словаре
+        is_duplicate = False
+        for existing_hashes, existing_path in perceptual_hashes.items():
+            # Считаем количество совпадающих хешей
+            matching_hashes = sum(1 for i in range(
+                3) if hashes[i] == existing_hashes[i])
+
+            if matching_hashes >= similarity_threshold:
+                # Нашли дубликат
+                duplicates.append((path, hashes, existing_path))
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            # Это новое уникальное изображение
+            perceptual_hashes[hashes] = path
 
     return perceptual_hashes, duplicates
 
@@ -193,22 +232,45 @@ async def uniquify_duplicates(directory: Path) -> None:
             try:
                 image = Image.open(full_path).convert("RGB")
 
-                modification_func = random.choice(modification_functions)
+                # Применяем несколько модификаций одновременно для большей эффективности
+                modification_func1 = random.choice(modification_functions)
+                modification_func2 = random.choice(modification_functions)
+
                 logger.info(
                     f"  -> Попытка {attempt + 1}/{MAX_UNIQUIFY_ATTEMPTS}: "
-                    f"применяем '{modification_func.__name__}'..."
+                    f"применяем '{modification_func1.__name__}' и '{modification_func2.__name__}'..."
                 )
 
-                modified_image = modification_func(image)
+                # Применяем последовательно две модификации
+                modified_image = modification_func1(image)
+                modified_image = modification_func2(modified_image)
 
                 modified_image.save(full_path, format="JPEG")
 
-                new_p_hash = await loop.run_in_executor(
+                new_hashes = await loop.run_in_executor(
                     None, _calculate_perceptual_hash_sync, full_path
                 )
 
-                if new_p_hash and new_p_hash not in perceptual_hashes:
-                    perceptual_hashes[new_p_hash] = full_path
+                # Проверяем, является ли новый хеш уникальным
+                is_unique = True
+                if new_hashes:
+                    # Проверяем, нет ли похожих хешей в нашем словаре
+                    similarity_threshold = 2  # Если 2 из 3 хешей совпадают, считаем изображения дубликатами
+
+                    for existing_hashes in perceptual_hashes.keys():
+                        if existing_hashes == new_hashes:
+                            is_unique = False
+                            break
+
+                        # Считаем количество совпадающих хешей
+                        matching_hashes = sum(1 for i in range(
+                            3) if new_hashes[i] == existing_hashes[i])
+                        if matching_hashes >= similarity_threshold:
+                            is_unique = False
+                            break
+
+                if is_unique and new_hashes:
+                    perceptual_hashes[new_hashes] = full_path
                     uniquified_count += 1
                     logger.info(
                         f"  УСПЕХ: Изображение '{full_path}' "
@@ -218,7 +280,7 @@ async def uniquify_duplicates(directory: Path) -> None:
                     break
                 else:
                     logger.info(
-                        f"  НЕУДАЧА: Новый хеш ({new_p_hash}) все еще "
+                        f"  НЕУДАЧА: Новый хеш все еще "
                         f"является дубликатом. Повторная попытка..."
                     )
 
@@ -231,7 +293,7 @@ async def uniquify_duplicates(directory: Path) -> None:
 
         if not is_uniquified:
             logger.warning(
-                f"ПРЕДУПРЕЖДЕНИЕ: Не удалось уникализировать'{full_path}' "
+                f"ПРЕДУПРЕЖДЕНИЕ: Не удалось уникализировать '{full_path}' "
                 f"после {MAX_UNIQUIFY_ATTEMPTS} попыток."
             )
 
@@ -240,37 +302,56 @@ async def uniquify_duplicates(directory: Path) -> None:
 
 async def handle_duplicates(directory: Path) -> None:
     logger.info(f"Поиск дубликатов в '{directory}'...")
-    deleted_count = 0
+    renamed_count = 0
 
     await create_dir(directory)
 
     _unique_hashes, duplicates_info = await _get_file_hashes(directory)
 
-    for full_path, p_hash, original_path in duplicates_info:
+    # Словарь для отслеживания количества дубликатов для каждого оригинала
+    duplicate_counters = {}
+
+    for full_path, hash_tuple, original_path in duplicates_info:
         logger.info(
             f"Найден дубликат: '{full_path}' (оригинал: '{original_path}')")
 
+        # Получаем имя оригинального файла для группировки дубликатов
+        original_stem = original_path.stem
+
+        # Инициализируем счетчик для этого оригинала, если его еще нет
+        if original_stem not in duplicate_counters:
+            duplicate_counters[original_stem] = 1
+        else:
+            duplicate_counters[original_stem] += 1
+
+        # Используем счетчик для этого конкретного оригинала
+        duplicate_count = duplicate_counters[original_stem]
+
         stem = full_path.stem
         suffix = full_path.suffix
-        duplicate_count = 1
+
+        # Формируем новое имя с номером дубликата
         new_full_path = full_path.with_name(
             f"{stem}_duplicate_{duplicate_count}{suffix}"
         )
 
+        # Проверяем, существует ли уже файл с таким именем
         while await aiofiles.os.path.exists(new_full_path):
             duplicate_count += 1
             new_full_path = full_path.with_name(
                 f"{stem}_duplicate_{duplicate_count}{suffix}"
             )
+            # Обновляем счетчик для этого оригинала
+            duplicate_counters[original_stem] = duplicate_count
 
         await aiofiles.os.rename(full_path, new_full_path)
-        deleted_count += 1
+        renamed_count += 1
         logger.info(f"  -> Переименован в: '{new_full_path}'")
 
-    logger.info(f"Обработано {deleted_count} дубликатов (переименовано).")
+    logger.info(f"Обработано {renamed_count} дубликатов (переименовано).")
 
 
-async def download_images_for_folder(folder_name: str, urls: list[str], start_index: int = 1):
+async def download_images_for_folder(folder_name: str, urls: list[str], start_index: int = 1000):
     folder_path = IMAGE_DIR / folder_name
     await create_dir(folder_path)
 
@@ -285,22 +366,66 @@ async def download_images_for_folder(folder_name: str, urls: list[str], start_in
         await asyncio.gather(*tasks)
 
 
-async def download_images_from_file(file_path: Path) -> None:
+async def download_images_from_file(file_path: Path, start_index: int = 1000) -> None:
     await create_dir(IMAGE_DIR)
 
     try:
-        async with aiofiles.open(file_path, mode='r') as f:
-            async for line in f:
-                parts = re.split(r'[\s,;]+', line.strip())
-                if not parts:
+        current_folder = None
+        current_urls = []
+
+        # Открываем файл с указанием кодировки UTF-8
+        async with aiofiles.open(file_path, mode='r', encoding='utf-8') as f:
+            content = await f.read()
+            lines = content.splitlines()
+
+            for line in lines:
+                line = line.strip()
+                if not line:
                     continue
 
-                folder_name = parts[0]
-                urls_in_line = [
-                    url.strip() for url in parts[1:] if url.strip()
-                ]
-                if urls_in_line:
-                    await download_images_for_folder(folder_name, urls_in_line)
+                # Проверяем, является ли строка именем папки или URL
+                if line.startswith("http://") or line.startswith("https://"):
+                    # Это URL, добавляем к текущей папке
+                    if current_folder:
+                        current_urls.append(line)
+                else:
+                    # Это новое имя папки
+                    # Если у нас уже есть папка с URL, сначала обрабатываем их
+                    if current_folder and current_urls:
+                        logger.info(
+                            f"Обработка папки '{current_folder}' с {len(current_urls)} URL")
+                        await download_images_for_folder(current_folder, current_urls, start_index)
+                        logger.info(
+                            f"Скачано {len(current_urls)} изображений в папку '{current_folder}'")
+                        # Очищаем список URL для новой папки
+                        current_urls = []
+
+                    # Начинаем новую папку
+                    parts = re.split(r'[\s,;]+', line)
+                    # Если имя папки содержит пробелы, берем первые два слова
+                    if len(parts) > 1 and not (parts[1].startswith("http://") or parts[1].startswith("https://")):
+                        current_folder = f"{parts[0]} {parts[1]}"
+                        # Пропускаем первые два слова (имя папки)
+                        parts = parts[2:]
+                    else:
+                        current_folder = parts[0]
+                        # Пропускаем первое слово (имя папки)
+                        parts = parts[1:]
+
+                    logger.info(f"Новая папка: '{current_folder}'")
+
+                    # Добавляем URL из текущей строки
+                    current_urls = [url.strip() for url in parts if url.strip() and (
+                        url.startswith("http://") or url.startswith("https://"))]
+
+            # Обрабатываем последнюю папку, если она есть
+            if current_folder and current_urls:
+                logger.info(
+                    f"Обработка последней папки '{current_folder}' с {len(current_urls)} URL")
+                await download_images_for_folder(current_folder, current_urls, start_index)
+                logger.info(
+                    f"Скачано {len(current_urls)} изображений в папку '{current_folder}'")
+
     except FileNotFoundError:
         logger.error(f"Ошибка: Файл '{file_path}' не найден.")
         return
@@ -333,7 +458,25 @@ async def run_interactive_mode():
                     "Укажите путь к файлу с URL:"
                 ).ask_async()
                 if file_path_str:
-                    await download_images_from_file(Path(file_path_str))
+                    # Удаляем лишние пробелы в начале и конце пути
+                    file_path_str = file_path_str.strip()
+                    start_index_str = await questionary.text(
+                        "Введите начальный индекс для изображений (по умолчанию 1000):",
+                        default="1000"
+                    ).ask_async()
+                    start_index = int(
+                        start_index_str) if start_index_str.isdigit() else 1000
+                    try:
+                        # Проверяем существование файла перед обработкой
+                        path_obj = Path(file_path_str)
+                        if not path_obj.exists():
+                            logger.error(
+                                f"Файл '{file_path_str}' не существует.")
+                            continue
+                        await download_images_from_file(path_obj, start_index)
+                    except Exception as e:
+                        logger.error(
+                            f"Ошибка при обработке пути '{file_path_str}': {e}")
 
             elif download_type == "По списку URL":
                 urls_str = await questionary.text(
@@ -343,24 +486,66 @@ async def run_interactive_mode():
                     "Введите имя папки для сохранения:",
                     default="manual_downloads"
                 ).ask_async()
+                start_index_str = await questionary.text(
+                    "Введите начальный индекс для изображений (по умолчанию 1000):",
+                    default="1000"
+                ).ask_async()
+                start_index = int(
+                    start_index_str) if start_index_str.isdigit() else 1000
                 if urls_str and dest_folder:
                     urls = [url for url in re.split(
                         r'[\s;]+', urls_str.strip()) if url]
-                    await download_images_for_folder(dest_folder, urls)
+                    await download_images_for_folder(dest_folder, urls, start_index)
 
         elif command == "Найти и переименовать дубликаты":
             dir_path_str = await questionary.path(
                 "Укажите путь к директории для проверки:"
             ).ask_async()
             if dir_path_str:
-                await handle_duplicates(Path(dir_path_str))
+                # Очищаем путь от лишних кавычек, пробелов и специальных символов
+                dir_path_str = dir_path_str.strip()
+                # Удаляем кавычки и амперсанды, которые могут вызвать проблемы
+                if dir_path_str.startswith(("'", '"', '&')):
+                    dir_path_str = dir_path_str.lstrip("'\"& ")
+                if dir_path_str.endswith(("'", '"')):
+                    dir_path_str = dir_path_str.rstrip("'\"")
+
+                logger.info(f"Обрабатываем путь: '{dir_path_str}'")
+                try:
+                    path_obj = Path(dir_path_str)
+                    if not path_obj.exists():
+                        logger.error(
+                            f"Директория '{dir_path_str}' не существует.")
+                        continue
+                    await handle_duplicates(path_obj)
+                except Exception as e:
+                    logger.error(
+                        f"Ошибка при обработке пути '{dir_path_str}': {e}")
 
         elif command == "Уникализировать дубликаты":
             dir_path_str = await questionary.path(
                 "Укажите путь к директории для уникализации:"
             ).ask_async()
             if dir_path_str:
-                await uniquify_duplicates(Path(dir_path_str))
+                # Очищаем путь от лишних кавычек, пробелов и специальных символов
+                dir_path_str = dir_path_str.strip()
+                # Удаляем кавычки и амперсанды, которые могут вызвать проблемы
+                if dir_path_str.startswith(("'", '"', '&')):
+                    dir_path_str = dir_path_str.lstrip("'\"& ")
+                if dir_path_str.endswith(("'", '"')):
+                    dir_path_str = dir_path_str.rstrip("'\"")
+
+                logger.info(f"Обрабатываем путь: '{dir_path_str}'")
+                try:
+                    path_obj = Path(dir_path_str)
+                    if not path_obj.exists():
+                        logger.error(
+                            f"Директория '{dir_path_str}' не существует.")
+                        continue
+                    await uniquify_duplicates(path_obj)
+                except Exception as e:
+                    logger.error(
+                        f"Ошибка при обработке пути '{dir_path_str}': {e}")
 
         elif command == "Выход" or command is None:
             logger.info("Завершение работы.")
@@ -388,6 +573,10 @@ if __name__ == '__main__':
             "-d", "--dest", default="manual_downloads",
             help="Destination folder name."
         )
+        p_download.add_argument(
+            "-s", "--start-index", type=int, default=1000,
+            help="Starting index for image filenames (default: 1000)."
+        )
 
         # Команда find-duplicates
         p_find = subparsers.add_parser(
@@ -408,9 +597,13 @@ if __name__ == '__main__':
         main_coro = None
         if args.command == "download":
             if args.file:
-                main_coro = download_images_from_file(args.file)
+                main_coro = download_images_from_file(
+                    args.file, args.start_index
+                )
             elif args.urls:
-                main_coro = download_images_for_folder(args.dest, args.urls)
+                main_coro = download_images_for_folder(
+                    args.dest, args.urls, args.start_index
+                )
         elif args.command == "find-duplicates":
             main_coro = handle_duplicates(args.directory)
         elif args.command == "uniquify":
