@@ -300,6 +300,60 @@ async def uniquify_duplicates(directory: Path) -> None:
     logger.info(f"\nЗавершено. Уникализировано {uniquified_count} дубликатов.")
 
 
+async def uniquify_all_images(directory: Path) -> None:
+    """Уникализирует все изображения в директории."""
+    logger.info(f"Уникализация всех изображений в '{directory}'...")
+    uniquified_count = 0
+
+    await create_dir(directory)
+
+    modification_functions = [
+        _modify_brightness,
+        _modify_contrast,
+        _modify_crop,
+        _modify_add_noise,
+    ]
+
+    # Получаем список всех файлов изображений в директории
+    image_files = []
+    for filepath in await aiofiles.os.listdir(directory):
+        full_path = directory / filepath
+        if await aiofiles.os.path.isfile(full_path):
+            # Проверяем расширение файла
+            if full_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff']:
+                image_files.append(full_path)
+
+    logger.info(f"Найдено {len(image_files)} изображений для уникализации.")
+
+    for full_path in image_files:
+        logger.info(f"Уникализация изображения: '{full_path}'")
+        
+        try:
+            image = Image.open(full_path).convert("RGB")
+
+            # Применяем случайные модификации
+            modification_func1 = random.choice(modification_functions)
+            modification_func2 = random.choice(modification_functions)
+
+            logger.info(
+                f"  -> Применяем '{modification_func1.__name__}' и '{modification_func2.__name__}'..."
+            )
+
+            # Применяем последовательно две модификации
+            modified_image = modification_func1(image)
+            modified_image = modification_func2(modified_image)
+
+            modified_image.save(full_path, format="JPEG")
+            uniquified_count += 1
+            
+            logger.info(f"  УСПЕХ: Изображение '{full_path}' уникализировано.")
+
+        except Exception as e:
+            logger.error(f"  ОШИБКА при уникализации '{full_path}': {e}")
+
+    logger.info(f"\nЗавершено. Уникализировано {uniquified_count} изображений.")
+
+
 async def handle_duplicates(directory: Path) -> None:
     logger.info(f"Поиск дубликатов в '{directory}'...")
     renamed_count = 0
@@ -441,8 +495,8 @@ async def run_interactive_mode():
             "Что вы хотите сделать?",
             choices=[
                 "Скачать изображения",
-                "Найти и переименовать дубликаты",
-                "Уникализировать дубликаты",
+                "Работа с дубликатами",
+                "Уникализация",
                 "Выход"
             ]
         ).ask_async()
@@ -497,9 +551,69 @@ async def run_interactive_mode():
                         r'[\s;]+', urls_str.strip()) if url]
                     await download_images_for_folder(dest_folder, urls, start_index)
 
-        elif command == "Найти и переименовать дубликаты":
+        elif command == "Работа с дубликатами":
+            duplicate_action = await questionary.select(
+                "Выберите действие с дубликатами:",
+                choices=[
+                    "Найти и переименовать дубликаты",
+                    "Уникализировать дубликаты",
+                    "Назад"
+                ]
+            ).ask_async()
+
+            if duplicate_action == "Найти и переименовать дубликаты":
+                dir_path_str = await questionary.path(
+                    "Укажите путь к директории для проверки:"
+                ).ask_async()
+                if dir_path_str:
+                    # Очищаем путь от лишних кавычек, пробелов и специальных символов
+                    dir_path_str = dir_path_str.strip()
+                    # Удаляем кавычки и амперсанды, которые могут вызвать проблемы
+                    if dir_path_str.startswith(("'", '"', '&')):
+                        dir_path_str = dir_path_str.lstrip("'\"& ")
+                    if dir_path_str.endswith(("'", '"')):
+                        dir_path_str = dir_path_str.rstrip("'\"")
+
+                    logger.info(f"Обрабатываем путь: '{dir_path_str}'")
+                    try:
+                        path_obj = Path(dir_path_str)
+                        if not path_obj.exists():
+                            logger.error(
+                                f"Директория '{dir_path_str}' не существует.")
+                            continue
+                        await handle_duplicates(path_obj)
+                    except Exception as e:
+                        logger.error(
+                            f"Ошибка при обработке пути '{dir_path_str}': {e}")
+
+            elif duplicate_action == "Уникализировать дубликаты":
+                dir_path_str = await questionary.path(
+                    "Укажите путь к директории для уникализации дубликатов:"
+                ).ask_async()
+                if dir_path_str:
+                    # Очищаем путь от лишних кавычек, пробелов и специальных символов
+                    dir_path_str = dir_path_str.strip()
+                    # Удаляем кавычки и амперсанды, которые могут вызвать проблемы
+                    if dir_path_str.startswith(("'", '"', '&')):
+                        dir_path_str = dir_path_str.lstrip("'\"& ")
+                    if dir_path_str.endswith(("'", '"')):
+                        dir_path_str = dir_path_str.rstrip("'\"")
+
+                    logger.info(f"Обрабатываем путь: '{dir_path_str}'")
+                    try:
+                        path_obj = Path(dir_path_str)
+                        if not path_obj.exists():
+                            logger.error(
+                                f"Директория '{dir_path_str}' не существует.")
+                            continue
+                        await uniquify_duplicates(path_obj)
+                    except Exception as e:
+                        logger.error(
+                            f"Ошибка при обработке пути '{dir_path_str}': {e}")
+
+        elif command == "Уникализация":
             dir_path_str = await questionary.path(
-                "Укажите путь к директории для проверки:"
+                "Укажите путь к директории для уникализации всех изображений:"
             ).ask_async()
             if dir_path_str:
                 # Очищаем путь от лишних кавычек, пробелов и специальных символов
@@ -517,32 +631,7 @@ async def run_interactive_mode():
                         logger.error(
                             f"Директория '{dir_path_str}' не существует.")
                         continue
-                    await handle_duplicates(path_obj)
-                except Exception as e:
-                    logger.error(
-                        f"Ошибка при обработке пути '{dir_path_str}': {e}")
-
-        elif command == "Уникализировать дубликаты":
-            dir_path_str = await questionary.path(
-                "Укажите путь к директории для уникализации:"
-            ).ask_async()
-            if dir_path_str:
-                # Очищаем путь от лишних кавычек, пробелов и специальных символов
-                dir_path_str = dir_path_str.strip()
-                # Удаляем кавычки и амперсанды, которые могут вызвать проблемы
-                if dir_path_str.startswith(("'", '"', '&')):
-                    dir_path_str = dir_path_str.lstrip("'\"& ")
-                if dir_path_str.endswith(("'", '"')):
-                    dir_path_str = dir_path_str.rstrip("'\"")
-
-                logger.info(f"Обрабатываем путь: '{dir_path_str}'")
-                try:
-                    path_obj = Path(dir_path_str)
-                    if not path_obj.exists():
-                        logger.error(
-                            f"Директория '{dir_path_str}' не существует.")
-                        continue
-                    await uniquify_duplicates(path_obj)
+                    await uniquify_all_images(path_obj)
                 except Exception as e:
                     logger.error(
                         f"Ошибка при обработке пути '{dir_path_str}': {e}")
@@ -592,6 +681,13 @@ if __name__ == '__main__':
         p_uniq.add_argument("directory", type=Path,
                             help="Directory to process.")
 
+        # Команда uniquify-all
+        p_uniq_all = subparsers.add_parser(
+            "uniquify-all", help="Uniquify all images in directory."
+        )
+        p_uniq_all.add_argument("directory", type=Path,
+                                help="Directory to process.")
+
         args = parser.parse_args()
 
         main_coro = None
@@ -608,6 +704,8 @@ if __name__ == '__main__':
             main_coro = handle_duplicates(args.directory)
         elif args.command == "uniquify":
             main_coro = uniquify_duplicates(args.directory)
+        elif args.command == "uniquify-all":
+            main_coro = uniquify_all_images(args.directory)
 
         if main_coro:
             start_time = datetime.now()
