@@ -1,0 +1,187 @@
+"""
+Утилиты для работы с изображениями: хеширование и модификации.
+"""
+import asyncio
+import io
+import random
+from pathlib import Path
+from typing import Optional, Tuple, List
+
+import aiofiles
+import aiofiles.os
+import imagehash
+from PIL import Image, ImageEnhance
+
+from utils.config import (
+    BRIGHTNESS_FACTOR_RANGE,
+    CONTRAST_FACTOR_RANGE,
+    SIMILARITY_THRESHOLD,
+    SUPPORTED_IMAGE_EXTENSIONS
+)
+from utils.logger import logger
+
+
+def _calculate_perceptual_hash_sync(filepath: Path) -> Optional[Tuple[str, str, str]]:
+    """
+    Синхронная функция для вычисления нескольких перцептивных хешей.
+    Возвращает кортеж из трех хешей: phash, dhash и average_hash для более
+    точного определения дубликатов.
+    """
+    try:
+        image = Image.open(filepath).convert("RGB")
+        # Используем комбинацию из трех разных алгоритмов хеширования
+        # для повышения точности определения дубликатов
+        p_hash = str(imagehash.phash(image))
+        d_hash = str(imagehash.dhash(image))
+        a_hash = str(imagehash.average_hash(image))
+        return (p_hash, d_hash, a_hash)
+    except Exception as e:
+        logger.error(f"Ошибка при вычислении хеша для '{filepath}': {e}")
+        return None
+
+
+async def get_file_hashes(directory: Path) -> Tuple[dict[Tuple[str, str, str], Path], List[Tuple[Path, Tuple[str, str, str], Path]]]:
+    """
+    Асинхронно вычисляет перцептивные хеши для всех файлов в директории.
+    Теперь использует комбинацию из трех хешей для более точного определения дубликатов.
+    
+    Returns:
+        Tuple содержащий:
+        - Словарь уникальных хешей и путей к файлам
+        - Список дубликатов (путь, хеш, путь к оригиналу)
+    """
+    loop = asyncio.get_running_loop()
+    filepaths_to_process = []
+
+    for filepath in await aiofiles.os.listdir(directory):
+        full_path = directory / filepath
+        if await aiofiles.os.path.isfile(full_path):
+            filepaths_to_process.append(full_path)
+
+    tasks = [
+        loop.run_in_executor(None, _calculate_perceptual_hash_sync, fp)
+        for fp in filepaths_to_process
+    ]
+    hashes_results = await asyncio.gather(*tasks)
+
+    # Словарь для хранения хешей и соответствующих им путей
+    perceptual_hashes: dict[Tuple[str, str, str], Path] = {}
+    duplicates = []
+
+    for path, hashes in zip(filepaths_to_process, hashes_results):
+        if not hashes:
+            continue
+
+        # Проверяем, есть ли уже похожие хеши в нашем словаре
+        is_duplicate = False
+        for existing_hashes, existing_path in perceptual_hashes.items():
+            # Считаем количество совпадающих хешей
+            matching_hashes = sum(1 for i in range(3) if hashes[i] == existing_hashes[i])
+
+            if matching_hashes >= SIMILARITY_THRESHOLD:
+                # Нашли дубликат
+                duplicates.append((path, hashes, existing_path))
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            # Это новое уникальное изображение
+            perceptual_hashes[hashes] = path
+
+    return perceptual_hashes, duplicates
+
+
+def _modify_brightness(image: Image.Image) -> Image.Image:
+    """Слегка изменяет яркость изображения."""
+    enhancer = ImageEnhance.Brightness(image)
+    factor = 1 + random.uniform(*BRIGHTNESS_FACTOR_RANGE)
+    return enhancer.enhance(factor)
+
+
+def _modify_contrast(image: Image.Image) -> Image.Image:
+    """Слегка изменяет контраст изображения."""
+    enhancer = ImageEnhance.Contrast(image)
+    factor = 1 + random.uniform(*CONTRAST_FACTOR_RANGE)
+    return enhancer.enhance(factor)
+
+
+def _modify_crop(image: Image.Image) -> Image.Image:
+    """Обрезает изображение на 1 пиксель с каждой стороны."""
+    width, height = image.size
+    if width > 2 and height > 2:
+        return image.crop((1, 1, width - 1, height - 1))
+    return image  # Не обрезаем, если изображение слишком маленькое
+
+
+def _modify_add_noise(image: Image.Image) -> Image.Image:
+    """Добавляет один 'шумный' пиксель в случайном месте."""
+    width, height = image.size
+    px, py = random.randint(0, width - 1), random.randint(0, height - 1)
+    noise_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+    image.putpixel((px, py), noise_color)
+    return image
+
+
+def get_modification_functions():
+    """Возвращает список доступных функций модификации изображений."""
+    return [
+        _modify_brightness,
+        _modify_contrast,
+        _modify_crop,
+        _modify_add_noise,
+    ]
+
+
+def process_and_save_image_sync(image_data: bytes, full_path: Path, content_type: str = "") -> None:
+    """Синхронная функция для обработки и сохранения изображения с поддержкой разных форматов."""
+    try:
+        image_stream = io.BytesIO(image_data)
+
+        # Определяем формат по заголовкам файла
+        if image_data.startswith(b'\xff\xd8\xff'):
+            # JPEG
+            image = Image.open(image_stream)
+        elif image_data.startswith(b'\x89PNG'):
+            # PNG
+            image = Image.open(image_stream)
+        elif image_data.startswith(b'RIFF') and b'WEBP' in image_data[:20]:
+            # WebP
+            image = Image.open(image_stream)
+        elif image_data.startswith(b'GIF'):
+            # GIF
+            image = Image.open(image_stream)
+        else:
+            # Пробуем открыть как есть
+            image = Image.open(image_stream)
+
+        # Конвертируем в RGB если нужно
+        if image.mode in ('RGBA', 'LA', 'P'):
+            # Создаем белый фон для прозрачных изображений
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            if image.mode == 'P':
+                image = image.convert('RGBA')
+            background.paste(image, mask=image.split()[-1] if image.mode in ('RGBA', 'LA') else None)
+            image = background
+        elif image.mode != 'RGB':
+            image = image.convert('RGB')
+
+        # Сохраняем как JPEG
+        image.save(full_path, format="JPEG", quality=95)
+
+    except Exception as e:
+        logger.error(f"Ошибка при обработке изображения: {e}")
+        # Если не удалось обработать как изображение, сохраняем как есть
+        with open(full_path, 'wb') as f:
+            f.write(image_data)
+
+
+async def get_image_files(directory: Path) -> List[Path]:
+    """Возвращает список всех файлов изображений в директории."""
+    image_files = []
+    for filepath in await aiofiles.os.listdir(directory):
+        full_path = directory / filepath
+        if await aiofiles.os.path.isfile(full_path):
+            # Проверяем расширение файла
+            if full_path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                image_files.append(full_path)
+    return image_files
