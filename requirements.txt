@@ -3,3 +3,4 @@ aiofiles
 Pillow
 imagehash
 questionary
+pyinstaller
