@@ -19,25 +19,44 @@ from core.image_utils import (
 from core.downloader import create_dir
 
 
-async def handle_duplicates(directory: Path) -> None:
+async def find_duplicates(directory: Path) -> list:
     """
-    Находит дубликаты изображений и переименовывает их.
-    
+    Находит дубликаты изображений в директории.
+
     Args:
         directory: Директория для поиска дубликатов
+
+    Returns:
+        list: Список кортежей (путь_к_дубликату, хеш, путь_к_оригиналу)
     """
     logger.info(f"Поиск дубликатов в '{directory}'...")
-    renamed_count = 0
-
+    
     await create_dir(directory)
-
     _unique_hashes, duplicates_info = await get_file_hashes(directory)
+    
+    logger.info(f"Найдено {len(duplicates_info)} дубликатов.")
+    return duplicates_info
+
+
+async def rename_duplicates_from_list(duplicates_list: list) -> int:
+    """
+    Переименовывает дубликаты из предоставленного списка.
+
+    Args:
+        duplicates_list: Список кортежей (путь_к_дубликату, хеш, путь_к_оригиналу)
+
+    Returns:
+        int: Количество переименованных файлов
+    """
+    logger.info(f"Переименование {len(duplicates_list)} дубликатов...")
+    renamed_count = 0
 
     # Словарь для отслеживания количества дубликатов для каждого оригинала
     duplicate_counters = {}
 
-    for full_path, hash_tuple, original_path in duplicates_info:
-        logger.info(f"Найден дубликат: '{full_path}' (оригинал: '{original_path}')")
+    for full_path, hash_tuple, original_path in duplicates_list:
+        logger.info(
+            f"Переименование дубликата: '{full_path}' (оригинал: '{original_path}')")
 
         # Получаем имя оригинального файла для группировки дубликатов
         original_stem = original_path.stem
@@ -55,12 +74,14 @@ async def handle_duplicates(directory: Path) -> None:
         suffix = full_path.suffix
 
         # Формируем новое имя с номером дубликата
-        new_full_path = full_path.with_name(f"{stem}_duplicate_{duplicate_count}{suffix}")
+        new_full_path = full_path.with_name(
+            f"{stem}_duplicate_{duplicate_count}{suffix}")
 
         # Проверяем, существует ли уже файл с таким именем
         while await aiofiles.os.path.exists(new_full_path):
             duplicate_count += 1
-            new_full_path = full_path.with_name(f"{stem}_duplicate_{duplicate_count}{suffix}")
+            new_full_path = full_path.with_name(
+                f"{stem}_duplicate_{duplicate_count}{suffix}")
             # Обновляем счетчик для этого оригинала
             duplicate_counters[original_stem] = duplicate_count
 
@@ -69,12 +90,24 @@ async def handle_duplicates(directory: Path) -> None:
         logger.info(f"  -> Переименован в: '{new_full_path}'")
 
     logger.info(f"Обработано {renamed_count} дубликатов (переименовано).")
+    return renamed_count
+
+
+async def handle_duplicates(directory: Path) -> None:
+    """
+    Находит дубликаты изображений и переименовывает их (для CLI режима).
+
+    Args:
+        directory: Директория для поиска дубликатов
+    """
+    duplicates_list = await find_duplicates(directory)
+    await rename_duplicates_from_list(duplicates_list)
 
 
 async def uniquify_duplicates(directory: Path) -> None:
     """
     Находит дубликаты изображений и модифицирует их для уникальности.
-    
+
     Args:
         directory: Директория для обработки дубликатов
     """
@@ -88,7 +121,8 @@ async def uniquify_duplicates(directory: Path) -> None:
     loop = asyncio.get_running_loop()
 
     for full_path, original_hash, original_path_for_hash in duplicates_info:
-        logger.info(f"Найден дубликат: '{full_path}' (оригинал: '{original_path_for_hash}')")
+        logger.info(
+            f"Найден дубликат: '{full_path}' (оригинал: '{original_path_for_hash}')")
 
         is_uniquified = False
 
@@ -127,7 +161,8 @@ async def uniquify_duplicates(directory: Path) -> None:
                             break
 
                         # Считаем количество совпадающих хешей
-                        matching_hashes = sum(1 for i in range(3) if new_hashes[i] == existing_hashes[i])
+                        matching_hashes = sum(1 for i in range(
+                            3) if new_hashes[i] == existing_hashes[i])
                         if matching_hashes >= SIMILARITY_THRESHOLD:
                             is_unique = False
                             break
@@ -135,14 +170,17 @@ async def uniquify_duplicates(directory: Path) -> None:
                 if is_unique and new_hashes:
                     perceptual_hashes[new_hashes] = full_path
                     uniquified_count += 1
-                    logger.info(f"  УСПЕХ: Изображение '{full_path}' успешно уникализировано.")
+                    logger.info(
+                        f"  УСПЕХ: Изображение '{full_path}' успешно уникализировано.")
                     is_uniquified = True
                     break
                 else:
-                    logger.info(f"  НЕУДАЧА: Новый хеш все еще является дубликатом. Повторная попытка...")
+                    logger.info(
+                        f"  НЕУДАЧА: Новый хеш все еще является дубликатом. Повторная попытка...")
 
             except Exception as e:
-                logger.error(f"  ОШИБКА при уникализации '{full_path}' (попытка {attempt + 1}): {e}")
+                logger.error(
+                    f"  ОШИБКА при уникализации '{full_path}' (попытка {attempt + 1}): {e}")
                 break
 
         if not is_uniquified:
@@ -157,7 +195,7 @@ async def uniquify_duplicates(directory: Path) -> None:
 async def uniquify_all_images(directory: Path) -> None:
     """
     Уникализирует все изображения в директории.
-    
+
     Args:
         directory: Директория для обработки
     """
@@ -198,4 +236,5 @@ async def uniquify_all_images(directory: Path) -> None:
         except Exception as e:
             logger.error(f"  ОШИБКА при уникализации '{full_path}': {e}")
 
-    logger.info(f"\nЗавершено. Уникализировано {uniquified_count} изображений.")
+    logger.info(
+        f"\nЗавершено. Уникализировано {uniquified_count} изображений.")
