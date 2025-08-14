@@ -62,16 +62,52 @@ async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Pa
             full_path = target_dir / new_filename
             counter += 1
 
+        # Заголовки для имитации браузера (поддержка динамических ссылок)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': 'https://www.avito.ru/',
+            'Sec-Fetch-Dest': 'image',
+            'Sec-Fetch-Mode': 'no-cors',
+            'Sec-Fetch-Site': 'cross-site'
+        }
+
         try:
-            async with session.get(url) as response:
-                response.raise_for_status()
+            # Делаем запрос с заголовками и обработкой редиректов
+            async with session.get(url, headers=headers, allow_redirects=True, timeout=30) as response:
+                # Проверяем статус ответа
+                if response.status != 200:
+                    logger.error(f"Ошибка HTTP {response.status} для {url}")
+                    return
+
+                # Проверяем Content-Type
+                content_type = response.headers.get('content-type', '').lower()
+                if not content_type.startswith('image/'):
+                    logger.warning(
+                        f"URL {url} не содержит изображение. Content-Type: {content_type}")
+                    return
+
+                # Читаем содержимое
                 image_data = await response.read()
+
+                # Проверяем размер
+                if len(image_data) < 100:
+                    logger.warning(
+                        f"Слишком маленький файл ({len(image_data)} байт) для {url}")
+                    return
+
+                # Обрабатываем и сохраняем изображение
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(
-                    None, _process_and_save_image_sync, image_data, full_path
+                    None, _process_and_save_image_sync, image_data, full_path, content_type
                 )
-                logger.info(f"Изображение сохранено как JPEG: {full_path}")
+                logger.info(
+                    f"Изображение сохранено как JPEG: {full_path} ({len(image_data)} байт)")
 
+        except asyncio.TimeoutError:
+            logger.error(f"Таймаут при скачивании {url}")
         except aiohttp.ClientError as e:
             logger.error(f"Ошибка при скачивании {url}: {e}")
         except Exception as e:
@@ -81,11 +117,48 @@ async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Pa
             )
 
 
-def _process_and_save_image_sync(image_data: bytes, full_path: Path):
-    """Синхронная функция для обработки и сохранения изображения."""
-    image_stream = io.BytesIO(image_data)
-    image = Image.open(image_stream).convert("RGB")
-    image.save(full_path, format="JPEG")
+def _process_and_save_image_sync(image_data: bytes, full_path: Path, content_type: str = ""):
+    """Синхронная функция для обработки и сохранения изображения с поддержкой разных форматов."""
+    try:
+        image_stream = io.BytesIO(image_data)
+
+        # Определяем формат по заголовкам файла
+        if image_data.startswith(b'\xff\xd8\xff'):
+            # JPEG
+            image = Image.open(image_stream)
+        elif image_data.startswith(b'\x89PNG'):
+            # PNG
+            image = Image.open(image_stream)
+        elif image_data.startswith(b'RIFF') and b'WEBP' in image_data[:20]:
+            # WebP
+            image = Image.open(image_stream)
+        elif image_data.startswith(b'GIF'):
+            # GIF
+            image = Image.open(image_stream)
+        else:
+            # Пробуем открыть как есть
+            image = Image.open(image_stream)
+
+        # Конвертируем в RGB если нужно
+        if image.mode in ('RGBA', 'LA', 'P'):
+            # Создаем белый фон для прозрачных изображений
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            if image.mode == 'P':
+                image = image.convert('RGBA')
+            background.paste(image, mask=image.split()
+                             [-1] if image.mode in ('RGBA', 'LA') else None)
+            image = background
+        elif image.mode != 'RGB':
+            image = image.convert('RGB')
+
+        # Сохраняем как JPEG
+        image.save(full_path, format="JPEG", quality=95)
+
+    except Exception as e:
+        logger.error(f"Ошибка при обработке изображения: {e}")
+        # Если не удалось обработать как изображение, сохраняем как есть
+        with open(full_path, 'wb') as f:
+            f.write(image_data)
 
 
 async def create_dir(dir_name: Path) -> None:
@@ -327,7 +400,7 @@ async def uniquify_all_images(directory: Path) -> None:
 
     for full_path in image_files:
         logger.info(f"Уникализация изображения: '{full_path}'")
-        
+
         try:
             image = Image.open(full_path).convert("RGB")
 
@@ -345,13 +418,14 @@ async def uniquify_all_images(directory: Path) -> None:
 
             modified_image.save(full_path, format="JPEG")
             uniquified_count += 1
-            
+
             logger.info(f"  УСПЕХ: Изображение '{full_path}' уникализировано.")
 
         except Exception as e:
             logger.error(f"  ОШИБКА при уникализации '{full_path}': {e}")
 
-    logger.info(f"\nЗавершено. Уникализировано {uniquified_count} изображений.")
+    logger.info(
+        f"\nЗавершено. Уникализировано {uniquified_count} изображений.")
 
 
 async def handle_duplicates(directory: Path) -> None:
