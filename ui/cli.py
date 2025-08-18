@@ -6,18 +6,18 @@ from pathlib import Path
 
 import questionary
 
+from core.downloader import download_images_for_folder, download_images_from_file
+from core.duplicates import handle_duplicates, uniquify_all_images, uniquify_duplicates
 from utils.logger import logger
-from core.downloader import download_images_from_file, download_images_for_folder
-from core.duplicates import handle_duplicates, uniquify_duplicates, uniquify_all_images
 
 
 def _clean_path_string(path_str: str) -> str:
     """
     Очищает строку пути от лишних символов.
-    
+
     Args:
         path_str: Исходная строка пути
-        
+
     Returns:
         Очищенная строка пути
     """
@@ -36,31 +36,41 @@ async def _handle_download_from_file():
     file_path_str = await questionary.path(
         "Укажите путь к файлу с URL:"
     ).ask_async()
-    
+
     if file_path_str:
         file_path_str = _clean_path_string(file_path_str)
         start_index_str = await questionary.text(
             "Введите начальный индекс для изображений (по умолчанию 1000):",
             default="1000"
         ).ask_async()
-        start_index = int(start_index_str) if start_index_str.isdigit() else 1000
-        
+        start_index = int(
+            start_index_str) if start_index_str.isdigit() else 1000
+
         delay_str = await questionary.text(
-            "Введите задержку между запросами в секундах (по умолчанию 0, рекомендуется 1-3 для Авито):",
-            default="0"
+            "Введите задержку между запросами в секундах "
+            "(по умолчанию 0, рекомендуется 1-3 для Авито):",
+            default="0",
         ).ask_async()
         try:
             delay = float(delay_str) if delay_str else 0
         except ValueError:
             delay = 0
-        
+
+        browser_mode = await questionary.confirm(
+            "Использовать браузерный режим? "
+            "(медленнее, но обходит блокировки Avito и подобных сайтов)",
+            default=False,
+        ).ask_async()
+
         try:
             # Проверяем существование файла перед обработкой
             path_obj = Path(file_path_str)
             if not path_obj.exists():
                 logger.error(f"Файл '{file_path_str}' не существует.")
                 return
-            await download_images_from_file(path_obj, start_index, delay)
+            await download_images_from_file(
+                path_obj, start_index, delay, browser_mode
+            )
         except Exception as e:
             logger.error(f"Ошибка при обработке пути '{file_path_str}': {e}")
 
@@ -79,19 +89,28 @@ async def _handle_download_from_urls():
         default="1000"
     ).ask_async()
     start_index = int(start_index_str) if start_index_str.isdigit() else 1000
-    
+
     delay_str = await questionary.text(
-        "Введите задержку между запросами в секундах (по умолчанию 0, рекомендуется 1-3 для Авито):",
-        default="0"
+        "Введите задержку между запросами в секундах "
+        "(по умолчанию 0, рекомендуется 1-3 для Авито):",
+        default="0",
     ).ask_async()
     try:
         delay = float(delay_str) if delay_str else 0
     except ValueError:
         delay = 0
-    
+
+    browser_mode = await questionary.confirm(
+        "Использовать браузерный режим? "
+        "(медленнее, но обходит блокировки Avito и подобных сайтов)",
+        default=False,
+    ).ask_async()
+
     if urls_str and dest_folder:
         urls = [url for url in re.split(r'[\s;]+', urls_str.strip()) if url]
-        await download_images_for_folder(dest_folder, urls, start_index, delay)
+        await download_images_for_folder(
+            dest_folder, urls, start_index, delay, browser_mode
+        )
 
 
 async def _handle_download_menu():
@@ -129,11 +148,11 @@ async def _handle_find_and_rename_duplicates():
     dir_path_str = await questionary.path(
         "Укажите путь к директории для проверки:"
     ).ask_async()
-    
+
     if dir_path_str:
         dir_path_str = _clean_path_string(dir_path_str)
         logger.info(f"Обрабатываем путь: '{dir_path_str}'")
-        
+
         try:
             path_obj = Path(dir_path_str)
             if not path_obj.exists():
@@ -149,11 +168,11 @@ async def _handle_uniquify_duplicates():
     dir_path_str = await questionary.path(
         "Укажите путь к директории для уникализации дубликатов:"
     ).ask_async()
-    
+
     if dir_path_str:
         dir_path_str = _clean_path_string(dir_path_str)
         logger.info(f"Обрабатываем путь: '{dir_path_str}'")
-        
+
         try:
             path_obj = Path(dir_path_str)
             if not path_obj.exists():
@@ -169,11 +188,11 @@ async def _handle_uniquify_all():
     dir_path_str = await questionary.path(
         "Укажите путь к директории для уникализации всех изображений:"
     ).ask_async()
-    
+
     if dir_path_str:
         dir_path_str = _clean_path_string(dir_path_str)
         logger.info(f"Обрабатываем путь: '{dir_path_str}'")
-        
+
         try:
             path_obj = Path(dir_path_str)
             if not path_obj.exists():

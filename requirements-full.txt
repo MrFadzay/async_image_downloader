@@ -1,0 +1,9 @@
+# Полные зависимости (с браузерным режимом)
+aiohttp
+aiofiles
+types-aiofiles
+Pillow
+imagehash
+questionary
+pyinstaller
+playwright

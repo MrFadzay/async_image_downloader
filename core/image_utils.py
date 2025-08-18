@@ -16,12 +16,14 @@ from utils.config import (
     BRIGHTNESS_FACTOR_RANGE,
     CONTRAST_FACTOR_RANGE,
     SIMILARITY_THRESHOLD,
-    SUPPORTED_IMAGE_EXTENSIONS
+    SUPPORTED_IMAGE_EXTENSIONS,
 )
 from utils.logger import logger
 
 
-def _calculate_perceptual_hash_sync(filepath: Path) -> Optional[Tuple[str, str, str]]:
+def _calculate_perceptual_hash_sync(
+    filepath: Path,
+) -> Optional[Tuple[str, str, str]]:
     """
     Синхронная функция для вычисления нескольких перцептивных хешей.
     Возвращает кортеж из трех хешей: phash, dhash и average_hash для более
@@ -40,11 +42,15 @@ def _calculate_perceptual_hash_sync(filepath: Path) -> Optional[Tuple[str, str, 
         return None
 
 
-async def get_file_hashes(directory: Path) -> Tuple[dict[Tuple[str, str, str], Path], List[Tuple[Path, Tuple[str, str, str], Path]]]:
+async def get_file_hashes(
+    directory: Path,
+) -> Tuple[
+    dict[Tuple[str, str, str], Path], List[Tuple[Path, Tuple[str, str, str], Path]]
+]:
     """
     Асинхронно вычисляет перцептивные хеши для всех файлов в директории.
     Теперь использует комбинацию из трех хешей для более точного определения дубликатов.
-    
+
     Returns:
         Tuple содержащий:
         - Словарь уникальных хешей и путей к файлам
@@ -76,7 +82,9 @@ async def get_file_hashes(directory: Path) -> Tuple[dict[Tuple[str, str, str], P
         is_duplicate = False
         for existing_hashes, existing_path in perceptual_hashes.items():
             # Считаем количество совпадающих хешей
-            matching_hashes = sum(1 for i in range(3) if hashes[i] == existing_hashes[i])
+            matching_hashes = sum(
+                1 for i in range(3) if hashes[i] == existing_hashes[i]
+            )
 
             if matching_hashes >= SIMILARITY_THRESHOLD:
                 # Нашли дубликат
@@ -117,7 +125,8 @@ def _modify_add_noise(image: Image.Image) -> Image.Image:
     """Добавляет один 'шумный' пиксель в случайном месте."""
     width, height = image.size
     px, py = random.randint(0, width - 1), random.randint(0, height - 1)
-    noise_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+    noise_color = (random.randint(0, 255), random.randint(
+        0, 255), random.randint(0, 255))
     image.putpixel((px, py), noise_color)
     return image
 
@@ -132,7 +141,9 @@ def get_modification_functions():
     ]
 
 
-def process_and_save_image_sync(image_data: bytes, full_path: Path, content_type: str = "") -> None:
+def process_and_save_image_sync(
+    image_data: bytes, full_path: Path, content_type: str = ""
+) -> None:
     """Синхронная функция для обработки и сохранения изображения с поддержкой разных форматов."""
     try:
         image_stream = io.BytesIO(image_data)
@@ -160,7 +171,8 @@ def process_and_save_image_sync(image_data: bytes, full_path: Path, content_type
             background = Image.new('RGB', image.size, (255, 255, 255))
             if image.mode == 'P':
                 image = image.convert('RGBA')
-            background.paste(image, mask=image.split()[-1] if image.mode in ('RGBA', 'LA') else None)
+            background.paste(image, mask=image.split()
+                             [-1] if image.mode in ('RGBA', 'LA') else None)
             image = background
         elif image.mode != 'RGB':
             image = image.convert('RGB')
