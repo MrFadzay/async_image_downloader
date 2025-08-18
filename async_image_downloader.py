@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 semaphore = asyncio.Semaphore(10)
 
 
-async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Path, file_index: int):
+async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Path, file_index: int, delay: float = 0):
     async with semaphore:
         # Базовое имя файла
         base_filename = f"{file_index}"
@@ -105,6 +105,10 @@ async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Pa
                 )
                 logger.info(
                     f"Изображение сохранено как JPEG: {full_path} ({len(image_data)} байт)")
+
+                # Добавляем задержку между запросами для избежания блокировки
+                if delay > 0:
+                    await asyncio.sleep(delay)
 
         except asyncio.TimeoutError:
             logger.error(f"Таймаут при скачивании {url}")
@@ -479,7 +483,7 @@ async def handle_duplicates(directory: Path) -> None:
     logger.info(f"Обработано {renamed_count} дубликатов (переименовано).")
 
 
-async def download_images_for_folder(folder_name: str, urls: list[str], start_index: int = 1000):
+async def download_images_for_folder(folder_name: str, urls: list[str], start_index: int = 1000, delay: float = 0):
     folder_path = IMAGE_DIR / folder_name
     await create_dir(folder_path)
 
@@ -488,13 +492,13 @@ async def download_images_for_folder(folder_name: str, urls: list[str], start_in
         for i, url in enumerate(urls):
             tasks.append(
                 asyncio.create_task(
-                    download_file(session, url, folder_path, start_index + i)
+                    download_file(session, url, folder_path, start_index + i, delay)
                 )
             )
         await asyncio.gather(*tasks)
 
 
-async def download_images_from_file(file_path: Path, start_index: int = 1000) -> None:
+async def download_images_from_file(file_path: Path, start_index: int = 1000, delay: float = 0) -> None:
     await create_dir(IMAGE_DIR)
 
     try:
@@ -522,7 +526,7 @@ async def download_images_from_file(file_path: Path, start_index: int = 1000) ->
                     if current_folder and current_urls:
                         logger.info(
                             f"Обработка папки '{current_folder}' с {len(current_urls)} URL")
-                        await download_images_for_folder(current_folder, current_urls, start_index)
+                        await download_images_for_folder(current_folder, current_urls, start_index, delay)
                         logger.info(
                             f"Скачано {len(current_urls)} изображений в папку '{current_folder}'")
                         # Очищаем список URL для новой папки
@@ -550,7 +554,7 @@ async def download_images_from_file(file_path: Path, start_index: int = 1000) ->
             if current_folder and current_urls:
                 logger.info(
                     f"Обработка последней папки '{current_folder}' с {len(current_urls)} URL")
-                await download_images_for_folder(current_folder, current_urls, start_index)
+                await download_images_for_folder(current_folder, current_urls, start_index, delay)
                 logger.info(
                     f"Скачано {len(current_urls)} изображений в папку '{current_folder}'")
 
@@ -594,6 +598,15 @@ async def run_interactive_mode():
                     ).ask_async()
                     start_index = int(
                         start_index_str) if start_index_str.isdigit() else 1000
+                    
+                    delay_str = await questionary.text(
+                        "Введите задержку между запросами в секундах (по умолчанию 0, рекомендуется 1-3 для Авито):",
+                        default="0"
+                    ).ask_async()
+                    try:
+                        delay = float(delay_str) if delay_str else 0
+                    except ValueError:
+                        delay = 0
                     try:
                         # Проверяем существование файла перед обработкой
                         path_obj = Path(file_path_str)
@@ -601,7 +614,7 @@ async def run_interactive_mode():
                             logger.error(
                                 f"Файл '{file_path_str}' не существует.")
                             continue
-                        await download_images_from_file(path_obj, start_index)
+                        await download_images_from_file(path_obj, start_index, delay)
                     except Exception as e:
                         logger.error(
                             f"Ошибка при обработке пути '{file_path_str}': {e}")
@@ -620,10 +633,20 @@ async def run_interactive_mode():
                 ).ask_async()
                 start_index = int(
                     start_index_str) if start_index_str.isdigit() else 1000
+                
+                delay_str = await questionary.text(
+                    "Введите задержку между запросами в секундах (по умолчанию 0, рекомендуется 1-3 для Авито):",
+                    default="0"
+                ).ask_async()
+                try:
+                    delay = float(delay_str) if delay_str else 0
+                except ValueError:
+                    delay = 0
+                    
                 if urls_str and dest_folder:
                     urls = [url for url in re.split(
                         r'[\s;]+', urls_str.strip()) if url]
-                    await download_images_for_folder(dest_folder, urls, start_index)
+                    await download_images_for_folder(dest_folder, urls, start_index, delay)
 
         elif command == "Работа с дубликатами":
             duplicate_action = await questionary.select(
@@ -740,6 +763,10 @@ if __name__ == '__main__':
             "-s", "--start-index", type=int, default=1000,
             help="Starting index for image filenames (default: 1000)."
         )
+        p_download.add_argument(
+            "--delay", type=float, default=0,
+            help="Delay between requests in seconds (default: 0, recommended 1-3 for Avito)."
+        )
 
         # Команда find-duplicates
         p_find = subparsers.add_parser(
@@ -768,11 +795,11 @@ if __name__ == '__main__':
         if args.command == "download":
             if args.file:
                 main_coro = download_images_from_file(
-                    args.file, args.start_index
+                    args.file, args.start_index, args.delay
                 )
             elif args.urls:
                 main_coro = download_images_for_folder(
-                    args.dest, args.urls, args.start_index
+                    args.dest, args.urls, args.start_index, args.delay
                 )
         elif args.command == "find-duplicates":
             main_coro = handle_duplicates(args.directory)
