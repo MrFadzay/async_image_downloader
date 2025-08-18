@@ -45,13 +45,22 @@ async def _handle_download_from_file():
         ).ask_async()
         start_index = int(start_index_str) if start_index_str.isdigit() else 1000
         
+        delay_str = await questionary.text(
+            "Введите задержку между запросами в секундах (по умолчанию 0, рекомендуется 1-3 для Авито):",
+            default="0"
+        ).ask_async()
+        try:
+            delay = float(delay_str) if delay_str else 0
+        except ValueError:
+            delay = 0
+        
         try:
             # Проверяем существование файла перед обработкой
             path_obj = Path(file_path_str)
             if not path_obj.exists():
                 logger.error(f"Файл '{file_path_str}' не существует.")
                 return
-            await download_images_from_file(path_obj, start_index)
+            await download_images_from_file(path_obj, start_index, delay)
         except Exception as e:
             logger.error(f"Ошибка при обработке пути '{file_path_str}': {e}")
 
@@ -71,9 +80,18 @@ async def _handle_download_from_urls():
     ).ask_async()
     start_index = int(start_index_str) if start_index_str.isdigit() else 1000
     
+    delay_str = await questionary.text(
+        "Введите задержку между запросами в секундах (по умолчанию 0, рекомендуется 1-3 для Авито):",
+        default="0"
+    ).ask_async()
+    try:
+        delay = float(delay_str) if delay_str else 0
+    except ValueError:
+        delay = 0
+    
     if urls_str and dest_folder:
         urls = [url for url in re.split(r'[\s;]+', urls_str.strip()) if url]
-        await download_images_for_folder(dest_folder, urls, start_index)
+        await download_images_for_folder(dest_folder, urls, start_index, delay)
 
 
 async def _handle_download_menu():

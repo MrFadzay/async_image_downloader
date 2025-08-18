@@ -25,6 +25,8 @@ def create_argument_parser():
     p_download.add_argument("-d", "--dest", default="manual_downloads", help="Destination folder name.")
     p_download.add_argument("-s", "--start-index", type=int, default=1000,
                            help="Starting index for image filenames (default: 1000).")
+    p_download.add_argument("--delay", type=float, default=0,
+                           help="Delay between requests in seconds (default: 0, recommended 1-3 for Avito).")
 
     # Команда find-duplicates
     p_find = subparsers.add_parser("find-duplicates", help="Find and rename duplicate images.")
@@ -53,9 +55,9 @@ def handle_cli_command(args):
     """
     if args.command == "download":
         if args.file:
-            return download_images_from_file(args.file, args.start_index)
+            return download_images_from_file(args.file, args.start_index, args.delay)
         elif args.urls:
-            return download_images_for_folder(args.dest, args.urls, args.start_index)
+            return download_images_for_folder(args.dest, args.urls, args.start_index, args.delay)
     elif args.command == "find-duplicates":
         return handle_duplicates(args.directory)
     elif args.command == "uniquify":

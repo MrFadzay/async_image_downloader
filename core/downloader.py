@@ -29,7 +29,7 @@ async def create_dir(dir_name: Path) -> None:
     await aiofiles.os.makedirs(dir_name, exist_ok=True)
 
 
-async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Path, file_index: int) -> None:
+async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Path, file_index: int, delay: float = 0) -> None:
     """
     Скачивает один файл по URL и сохраняет в указанную директорию.
     
@@ -38,6 +38,7 @@ async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Pa
         url: URL для скачивания
         target_dir: Директория для сохранения
         file_index: Индекс файла для именования
+        delay: Задержка между запросами в секундах
     """
     async with semaphore:
         # Базовое имя файла
@@ -81,6 +82,10 @@ async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Pa
                 )
                 logger.info(f"Изображение сохранено как JPEG: {full_path} ({len(image_data)} байт)")
 
+                # Добавляем задержку между запросами для избежания блокировки
+                if delay > 0:
+                    await asyncio.sleep(delay)
+
         except asyncio.TimeoutError:
             logger.error(f"Таймаут при скачивании {url}")
         except aiohttp.ClientError as e:
@@ -89,7 +94,7 @@ async def download_file(session: aiohttp.ClientSession, url: str, target_dir: Pa
             logger.error(f"Неизвестная ошибка при скачивании/сохранении {url}: {e}")
 
 
-async def download_images_for_folder(folder_name: str, urls: List[str], start_index: int = 1000) -> None:
+async def download_images_for_folder(folder_name: str, urls: List[str], start_index: int = 1000, delay: float = 0) -> None:
     """
     Скачивает изображения по списку URL в указанную папку.
     
@@ -97,6 +102,7 @@ async def download_images_for_folder(folder_name: str, urls: List[str], start_in
         folder_name: Имя папки для сохранения
         urls: Список URL для скачивания
         start_index: Начальный индекс для именования файлов
+        delay: Задержка между запросами в секундах
     """
     folder_path = IMAGE_DIR / folder_name
     await create_dir(folder_path)
@@ -106,13 +112,13 @@ async def download_images_for_folder(folder_name: str, urls: List[str], start_in
         for i, url in enumerate(urls):
             tasks.append(
                 asyncio.create_task(
-                    download_file(session, url, folder_path, start_index + i)
+                    download_file(session, url, folder_path, start_index + i, delay)
                 )
             )
         await asyncio.gather(*tasks)
 
 
-async def download_images_from_file(file_path: Path, start_index: int = 1000) -> None:
+async def download_images_from_file(file_path: Path, start_index: int = 1000, delay: float = 0) -> None:
     """
     Скачивает изображения из файла, содержащего URL и имена папок.
     
@@ -123,6 +129,7 @@ async def download_images_from_file(file_path: Path, start_index: int = 1000) ->
     Args:
         file_path: Путь к файлу с URL
         start_index: Начальный индекс для именования файлов
+        delay: Задержка между запросами в секундах
     """
     await create_dir(IMAGE_DIR)
 
@@ -150,7 +157,7 @@ async def download_images_from_file(file_path: Path, start_index: int = 1000) ->
                     # Если у нас уже есть папка с URL, сначала обрабатываем их
                     if current_folder and current_urls:
                         logger.info(f"Обработка папки '{current_folder}' с {len(current_urls)} URL")
-                        await download_images_for_folder(current_folder, current_urls, start_index)
+                        await download_images_for_folder(current_folder, current_urls, start_index, delay)
                         logger.info(f"Скачано {len(current_urls)} изображений в папку '{current_folder}'")
                         # Очищаем список URL для новой папки
                         current_urls = []
@@ -176,7 +183,7 @@ async def download_images_from_file(file_path: Path, start_index: int = 1000) ->
             # Обрабатываем последнюю папку, если она есть
             if current_folder and current_urls:
                 logger.info(f"Обработка последней папки '{current_folder}' с {len(current_urls)} URL")
-                await download_images_for_folder(current_folder, current_urls, start_index)
+                await download_images_for_folder(current_folder, current_urls, start_index, delay)
                 logger.info(f"Скачано {len(current_urls)} изображений в папку '{current_folder}'")
 
     except FileNotFoundError:
