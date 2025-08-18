@@ -19,7 +19,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.13'
+        python-version: '3.11'
 
     - name: Install dependencies
       run: |
@@ -27,7 +27,7 @@ jobs:
         pip install -r requirements.txt
 
     - name: Build with PyInstaller
-      run: python -m PyInstaller --onefile --console async_image_downloader.py
+      run: python -m PyInstaller --onefile --console main.py
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4

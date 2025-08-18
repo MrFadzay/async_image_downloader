@@ -2,6 +2,7 @@
 Модуль для асинхронного скачивания изображений.
 """
 import asyncio
+import platform
 import random
 import re
 from pathlib import Path
@@ -147,20 +148,38 @@ async def download_images_for_folder(
         logger.info(f"Быстрый режим: скачивание {len(urls)} изображений")
 
         tasks = []
-        async with aiohttp.ClientSession() as session:
-            for i, url in enumerate(urls):
-                tasks.append(
-                    asyncio.create_task(
-                        download_file_fast(
-                            session,
-                            url,
-                            folder_path,
-                            start_index + i,
-                            delay,
+        # На Mac отключаем проверку SSL для совместимости
+        if platform.system() == 'Darwin':  # macOS
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                for i, url in enumerate(urls):
+                    tasks.append(
+                        asyncio.create_task(
+                            download_file_fast(
+                                session,
+                                url,
+                                folder_path,
+                                start_index + i,
+                                delay,
+                            )
                         )
                     )
-                )
-            await asyncio.gather(*tasks)
+                await asyncio.gather(*tasks)
+        else:
+            async with aiohttp.ClientSession() as session:
+                for i, url in enumerate(urls):
+                    tasks.append(
+                        asyncio.create_task(
+                            download_file_fast(
+                                session,
+                                url,
+                                folder_path,
+                                start_index + i,
+                                delay,
+                            )
+                        )
+                    )
+                await asyncio.gather(*tasks)
 
 
 async def download_images_from_file(

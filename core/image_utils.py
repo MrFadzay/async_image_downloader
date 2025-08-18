@@ -62,6 +62,11 @@ async def get_file_hashes(
     for filepath in await aiofiles.os.listdir(directory):
         full_path = directory / filepath
         if await aiofiles.os.path.isfile(full_path):
+            # Игнорируем системные файлы и файлы без расширений изображений
+            if (filepath.startswith('.') or  # Скрытые файлы (.DS_Store, .Thumbs.db)
+                not any(filepath.lower().endswith(ext) for ext in 
+                       ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'])):
+                continue
             filepaths_to_process.append(full_path)
 
     tasks = [
