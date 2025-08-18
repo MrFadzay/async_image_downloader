@@ -56,12 +56,6 @@ async def _handle_download_from_file():
         except ValueError:
             delay = 0
 
-        browser_mode = await questionary.confirm(
-            "Использовать браузерный режим? "
-            "(медленнее, но обходит блокировки Avito и подобных сайтов)",
-            default=False,
-        ).ask_async()
-
         try:
             # Проверяем существование файла перед обработкой
             path_obj = Path(file_path_str)
@@ -69,7 +63,7 @@ async def _handle_download_from_file():
                 logger.error(f"Файл '{file_path_str}' не существует.")
                 return
             await download_images_from_file(
-                path_obj, start_index, delay, browser_mode
+                path_obj, start_index, delay
             )
         except Exception as e:
             logger.error(f"Ошибка при обработке пути '{file_path_str}': {e}")
@@ -100,16 +94,10 @@ async def _handle_download_from_urls():
     except ValueError:
         delay = 0
 
-    browser_mode = await questionary.confirm(
-        "Использовать браузерный режим? "
-        "(медленнее, но обходит блокировки Avito и подобных сайтов)",
-        default=False,
-    ).ask_async()
-
     if urls_str and dest_folder:
         urls = [url for url in re.split(r'[\s;]+', urls_str.strip()) if url]
         await download_images_for_folder(
-            dest_folder, urls, start_index, delay, browser_mode
+            dest_folder, urls, start_index, delay
         )
 
 

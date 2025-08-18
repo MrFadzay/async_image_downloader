@@ -59,13 +59,15 @@ async def get_file_hashes(
     loop = asyncio.get_running_loop()
     filepaths_to_process = []
 
-    for filepath in await aiofiles.os.listdir(directory):
-        full_path = directory / filepath
+    for filepath_name in await aiofiles.os.listdir(directory):
+        full_path = directory / filepath_name
         if await aiofiles.os.path.isfile(full_path):
-            # Игнорируем системные файлы и файлы без расширений изображений
-            if (filepath.startswith('.') or  # Скрытые файлы (.DS_Store, .Thumbs.db)
-                not any(filepath.lower().endswith(ext) for ext in 
-                       ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'])):
+            # Игнорируем скрытые файлы, такие как .DS_Store
+            if filepath_name.startswith('.'):
+                continue
+            # Игнорируем файлы без расширений изображений
+            if not any(filepath_name.lower().endswith(ext) for ext in
+                       ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']):
                 continue
             filepaths_to_process.append(full_path)
 
@@ -195,9 +197,12 @@ def process_and_save_image_sync(
 async def get_image_files(directory: Path) -> List[Path]:
     """Возвращает список всех файлов изображений в директории."""
     image_files = []
-    for filepath in await aiofiles.os.listdir(directory):
-        full_path = directory / filepath
+    for filepath_name in await aiofiles.os.listdir(directory):
+        full_path = directory / filepath_name
         if await aiofiles.os.path.isfile(full_path):
+            # Игнорируем скрытые файлы, такие как .DS_Store
+            if filepath_name.startswith('.'):
+                continue
             # Проверяем расширение файла
             if full_path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
                 image_files.append(full_path)

@@ -1,8 +1,8 @@
 """
 Модуль для асинхронного скачивания изображений.
+Использует curl_cffi для имитации браузера и обхода защит.
 """
 import asyncio
-import platform
 import random
 import re
 from pathlib import Path
@@ -10,20 +10,17 @@ from typing import List
 
 import aiofiles
 import aiofiles.os
-import aiohttp
+from curl_cffi import AsyncSession
 
 from utils.config import (
-    BROWSER_DEFAULT_DELAY,
     DOWNLOAD_TIMEOUT,
     FAST_DEFAULT_DELAY,
-    FAST_HEADERS,
     FAST_SEMAPHORE_LIMIT,
     IMAGE_DIR,
-    USER_AGENTS,
 )
 from utils.logger import logger
 from core.image_utils import process_and_save_image_sync
-from core.browser_downloader import download_images_browser
+
 
 # Семафор для ограничения одновременных соединений в быстром режиме
 fast_semaphore = asyncio.Semaphore(FAST_SEMAPHORE_LIMIT)
@@ -35,17 +32,17 @@ async def create_dir(dir_name: Path) -> None:
 
 
 async def download_file_fast(
-    session: aiohttp.ClientSession,
+    session: AsyncSession,
     url: str,
     target_dir: Path,
     file_index: int,
     delay: float = FAST_DEFAULT_DELAY,
 ) -> None:
     """
-    Быстрое скачивание файла для обычных сайтов.
+    Скачивание файла с имитацией браузера через curl_cffi.
 
     Args:
-        session: HTTP сессия
+        session: HTTP сессия curl_cffi.aio.AsyncSession
         url: URL для скачивания
         target_dir: Директория для сохранения
         file_index: Индекс файла для именования
@@ -64,49 +61,41 @@ async def download_file_fast(
             full_path = target_dir / new_filename
             counter += 1
 
-        # Простая задержка
         if delay > 0:
             await asyncio.sleep(delay + random.uniform(0, 0.1))
 
-        # Простые заголовки
-        headers = FAST_HEADERS.copy()
-        headers['User-Agent'] = random.choice(USER_AGENTS)
-
         try:
-            # Простой запрос
-            timeout = aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT)
-            async with session.get(
-                url, headers=headers, allow_redirects=True, timeout=timeout
-            ) as response:
-                if response.status != 200:
-                    logger.error(f"HTTP {response.status} для {url}")
-                    return
+            # Главное изменение: impersonate="chrome120" делает всю магию
+            response = await session.get(
+                url, 
+                impersonate="chrome120", 
+                timeout=DOWNLOAD_TIMEOUT, 
+                allow_redirects=True
+            )
+            
+            # Проверяем, что сервер нас принял
+            response.raise_for_status()
 
-                # Проверяем Content-Type
-                content_type = response.headers.get(
-                    'content-type', ''
-                ).lower()
-                if not content_type.startswith('image/'):
-                    logger.warning(f"URL {url} не содержит изображение")
-                    return
+            content_type = response.headers.get('content-type', '').lower()
+            if not content_type.startswith('image/'):
+                logger.warning(f"URL {url} не содержит изображение (Content-Type: {content_type})")
+                return
 
-                # Читаем и сохраняем
-                image_data = await response.read()
-                if len(image_data) < 100:
-                    logger.warning(f"Слишком маленький файл для {url}")
-                    return
+            image_data = response.content
+            if len(image_data) < 100:
+                logger.warning(f"Слишком маленький файл для {url}")
+                return
 
-                # Обрабатываем и сохраняем изображение
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(
-                    None,
-                    process_and_save_image_sync,
-                    image_data,
-                    full_path,
-                    content_type,
-                )
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                process_and_save_image_sync,
+                image_data,
+                full_path,
+                content_type,
+            )
 
-                logger.info(f"Сохранено: {full_path} ({len(image_data)} байт)")
+            logger.info(f"Сохранено: {full_path} ({len(image_data)} байт)")
 
         except Exception as e:
             logger.error(f"Ошибка при скачивании {url}: {e}")
@@ -117,7 +106,6 @@ async def download_images_for_folder(
     urls: List[str],
     start_index: int = 1000,
     delay: float = FAST_DEFAULT_DELAY,
-    browser_mode: bool = False,
 ) -> None:
     """
     Скачивает изображения по списку URL в указанную папку.
@@ -127,66 +115,34 @@ async def download_images_for_folder(
         urls: Список URL для скачивания
         start_index: Начальный индекс для именования файлов
         delay: Задержка между запросами в секундах
-        browser_mode: Использовать браузерный режим (медленнее, но надежнее)
     """
     folder_path = IMAGE_DIR / folder_name
     await create_dir(folder_path)
+    
+    logger.info(f"Скачивание {len(urls)} изображений в '{folder_name}'...")
 
-    if browser_mode:
-        try:
-            # Используем браузерный режим
-            await download_images_browser(
-                urls, folder_path, start_index, delay or BROWSER_DEFAULT_DELAY
+    tasks = []
+    # Создаем одну сессию для всех запросов - это эффективнее
+    async with AsyncSession() as session:
+        for i, url in enumerate(urls):
+            tasks.append(
+                asyncio.create_task(
+                    download_file_fast(
+                        session,
+                        url,
+                        folder_path,
+                        start_index + i,
+                        delay,
+                    )
+                )
             )
-        except Exception as e:
-            logger.error(f"Ошибка браузерного режима: {e}")
-            logger.info("Переключаемся на быстрый режим...")
-            browser_mode = False
-
-    if not browser_mode:
-        # Используем быстрый режим
-        logger.info(f"Быстрый режим: скачивание {len(urls)} изображений")
-
-        tasks = []
-        # На Mac отключаем проверку SSL для совместимости
-        if platform.system() == 'Darwin':  # macOS
-            connector = aiohttp.TCPConnector(ssl=False)
-            async with aiohttp.ClientSession(connector=connector) as session:
-                for i, url in enumerate(urls):
-                    tasks.append(
-                        asyncio.create_task(
-                            download_file_fast(
-                                session,
-                                url,
-                                folder_path,
-                                start_index + i,
-                                delay,
-                            )
-                        )
-                    )
-                await asyncio.gather(*tasks)
-        else:
-            async with aiohttp.ClientSession() as session:
-                for i, url in enumerate(urls):
-                    tasks.append(
-                        asyncio.create_task(
-                            download_file_fast(
-                                session,
-                                url,
-                                folder_path,
-                                start_index + i,
-                                delay,
-                            )
-                        )
-                    )
-                await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks)
 
 
 async def download_images_from_file(
     file_path: Path,
     start_index: int = 1000,
     delay: float = FAST_DEFAULT_DELAY,
-    browser_mode: bool = False,
 ) -> None:
     """
     Скачивает изображения из файла, содержащего URL и имена папок.
@@ -199,7 +155,6 @@ async def download_images_from_file(
         file_path: Путь к файлу с URL
         start_index: Начальный индекс для именования файлов
         delay: Задержка между запросами в секундах
-        browser_mode: Использовать браузерный режим (медленнее, но надежнее)
     """
     await create_dir(IMAGE_DIR)
 
@@ -235,7 +190,6 @@ async def download_images_from_file(
                             current_urls,
                             start_index,
                             delay,
-                            browser_mode,
                         )
                         logger.info(
                             f"Скачано {len(current_urls)} изображений "
@@ -275,7 +229,7 @@ async def download_images_from_file(
                     f"с {len(current_urls)} URL"
                 )
                 await download_images_for_folder(
-                    current_folder, current_urls, start_index, delay, browser_mode
+                    current_folder, current_urls, start_index, delay
                 )
                 logger.info(
                     f"Скачано {len(current_urls)} изображений "

@@ -26,34 +26,16 @@ IMAGE_DIR = BASE_DIR / 'images'
 # Настройки для скачивания
 DOWNLOAD_TIMEOUT = 30
 
-# Быстрый режим (aiohttp)
+# Настройки скачивания (curl_cffi)
 FAST_SEMAPHORE_LIMIT = 10
 FAST_DEFAULT_DELAY = 0.1
-
-# Браузерный режим (Playwright) 
-BROWSER_SEMAPHORE_LIMIT = 2
-BROWSER_DEFAULT_DELAY = 1.0
 
 # Настройки для уникализации
 BRIGHTNESS_FACTOR_RANGE = (-0.02, 0.02)
 CONTRAST_FACTOR_RANGE = (-0.03, 0.03)
 MAX_UNIQUIFY_ATTEMPTS = 10
 
-# Простые заголовки для быстрого режима
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-]
-
-# Базовые заголовки для быстрого режима
-FAST_HEADERS = {
-    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
-}
+# Примечание: curl_cffi автоматически управляет заголовками при использовании impersonate
 
 # Поддерживаемые расширения изображений
 SUPPORTED_IMAGE_EXTENSIONS = [

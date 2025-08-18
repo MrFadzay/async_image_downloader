@@ -3,9 +3,17 @@
 """
 import argparse
 import asyncio
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
+
+import certifi
+
+# Код для решения проблемы с SSL на macOS
+if getattr(sys, 'frozen', False):
+    os.environ['SSL_CERT_FILE'] = certifi.where()
+    os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from core.downloader import download_images_for_folder, download_images_from_file
 from core.duplicates import handle_duplicates, uniquify_all_images, uniquify_duplicates
@@ -48,12 +56,6 @@ def create_argument_parser():
         help="Delay between requests in seconds (default: 0, "
         "recommended 1-3 for Avito).",
     )
-    p_download.add_argument(
-        "--browser-mode",
-        action="store_true",
-        help="Use browser mode for sites with protection like Avito "
-        "(slower but more reliable).",
-    )
 
     # Команда find-duplicates
     p_find = subparsers.add_parser(
@@ -89,14 +91,13 @@ def handle_cli_command(args):
         Корутина для выполнения или None
     """
     if args.command == "download":
-        browser_mode = getattr(args, 'browser_mode', False)
         if args.file:
             return download_images_from_file(
-                args.file, args.start_index, args.delay, browser_mode
+                args.file, args.start_index, args.delay
             )
         elif args.urls:
             return download_images_for_folder(
-                args.dest, args.urls, args.start_index, args.delay, browser_mode
+                args.dest, args.urls, args.start_index, args.delay
             )
     elif args.command == "find-duplicates":
         return handle_duplicates(args.directory)
