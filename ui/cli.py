@@ -118,18 +118,12 @@ async def _handle_new_download_session():
     logger.info(f"* Начальный индекс: {start_index}")
     logger.info(f"* Количество попыток: {retries}")
 
-    confirm_download = await questionary.confirm(
-        "Начать скачивание?",
-        default=True
-    ).ask_async()
-    if confirm_download:
-        await run_download_session(
-            urls=urls,
-            start_index=start_index,
-            retries=retries
-        )
-    else:
-        logger.info("Скачивание отменено пользователем.")
+    logger.info("\nНачинаю скачивание...")
+    await run_download_session(
+        urls=urls,
+        start_index=start_index,
+        retries=retries
+    )
 
 
 async def _process_directory_action(
