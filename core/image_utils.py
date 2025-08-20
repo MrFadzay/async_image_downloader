@@ -154,6 +154,7 @@ def process_and_save_image_sync(
     """Синхронная функция для обработки и сохранения изображения с поддержкой разных форматов."""
     try:
         image_stream = io.BytesIO(image_data)
+        image: Image.Image
 
         # Определяем формат по заголовкам файла
         if image_data.startswith(b'\xff\xd8\xff'):
@@ -180,7 +181,7 @@ def process_and_save_image_sync(
                 image = image.convert('RGBA')
             background.paste(image, mask=image.split()
                              [-1] if image.mode in ('RGBA', 'LA') else None)
-            image = background
+            image = background.copy()  # Добавлено .copy() для избежания проблем с ссылками
         elif image.mode != 'RGB':
             image = image.convert('RGB')
 
@@ -188,10 +189,22 @@ def process_and_save_image_sync(
         image.save(full_path, format="JPEG", quality=95)
 
     except Exception as e:
-        logger.error(f"Ошибка при обработке изображения: {e}")
-        # Если не удалось обработать как изображение, сохраняем как есть
-        with open(full_path, 'wb') as f:
-            f.write(image_data)
+        # Логируем первые 50 байт данных и content_type для отладки
+        logger.error(
+            f"Ошибка при обработке изображения '{full_path.name}': {e}. "
+            f"Content-Type: '{content_type}'. Первые байты: {image_data[:50]!r}"
+        )
+        # Если не удалось обработать как изображение, сохраняем с расширением .unknown
+        # для последующего анализа.
+        unknown_path = full_path.parent / f"{full_path.name}.unknown"
+        try:
+            with open(unknown_path, 'wb') as f:
+                f.write(image_data)
+            logger.warning(
+                f"Неидентифицированный файл сохранен как: {unknown_path}")
+        except Exception as save_e:
+            logger.error(
+                f"Не удалось сохранить неидентифицированный файл {unknown_path}: {save_e}")
 
 
 async def get_image_files(directory: Path) -> List[Path]:

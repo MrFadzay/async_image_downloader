@@ -1,47 +1,61 @@
 """
-Конфигурация и константы для async image downloader.
+Конфигурация для асинхронного скачивания изображений.
+
+Основные разделы:
+- Пути и директории
+- Параметры скачивания и HTTP
+- Настройки обработки изображений
+- Определение дубликатов
 """
 import sys
 from pathlib import Path
 
 
-def get_base_dir():
+def get_base_dir() -> Path:
     """
-    Получает базовую директорию.
-    Для обычного скрипта - это папка со скриптом.
-    Для упакованного в .exe приложения - это папка с .exe файлом.
+    Определяет базовую директорию приложения.
+
+    Returns:
+        Path: Абсолютный путь к корневой папке приложения
+        (папка скрипта или .exe файла).
     """
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        # Мы запущены из .exe, созданного PyInstaller
         return Path(sys.executable).parent
-    else:
-        # Мы запущены как обычный .py скрипт
-        return Path(__file__).parent.parent
+    return Path(__file__).parent.parent
 
 
 # Базовые директории
 BASE_DIR = get_base_dir()
 IMAGE_DIR = BASE_DIR / 'images'
+DEFAULT_DOWNLOAD_DIR_NAME = "downloaded_images"
 
-# Настройки для скачивания
-DOWNLOAD_TIMEOUT = 30
+# Настройки HTTP и загрузки
+DOWNLOAD_TIMEOUT = 30  # seconds
 
-# Настройки скачивания (curl_cffi)
-FAST_SEMAPHORE_LIMIT = 10
-FAST_DEFAULT_DELAY = 0.1
+# Максимальное количество параллельных загрузок
+MAX_CONCURRENT_DOWNLOADS = 50
 
-# Настройки для уникализации
+# HTTP заголовки и User-Agent для запросов
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) "
+    "Gecko/20100101 Firefox/115.0",
+]
+
+# Настройки обработки изображений
+# Диапазоны для рандомизации при уникализации
 BRIGHTNESS_FACTOR_RANGE = (-0.02, 0.02)
 CONTRAST_FACTOR_RANGE = (-0.03, 0.03)
+# сколько попыток предпринять для уникализации изображения
 MAX_UNIQUIFY_ATTEMPTS = 10
-
-# Примечание: curl_cffi автоматически управляет заголовками при использовании impersonate
-
-# Поддерживаемые расширения изображений
+# Поддерживаемые форматы файлов
 SUPPORTED_IMAGE_EXTENSIONS = [
     '.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff'
 ]
 
-# Настройки для определения дубликатов
-# Если 2 из 3 хешей совпадают, считаем изображения дубликатами
+# Настройки определения дубликатов
+# Порог схожести: если 2 из 3 хешей совпадают
 SIMILARITY_THRESHOLD = 2

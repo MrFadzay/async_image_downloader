@@ -1,5 +1,10 @@
 """
-Главный файл async image downloader - точка входа для CLI и интерактивного режима.
+Async Image Downloader - инструмент для быстрого скачивания изображений.
+
+Поддерживает:
+- Скачивание изображений по списку URL
+- Поиск и обработку дубликатов
+- Уникализацию изображений
 """
 import argparse
 import asyncio
@@ -8,15 +13,17 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import certifi
-
-# Код для решения проблемы с SSL на macOS
+# --- Настройка для PyInstaller ---
 if getattr(sys, 'frozen', False):
+    import certifi
     os.environ['SSL_CERT_FILE'] = certifi.where()
     os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
-
-from core.downloader import download_images_for_folder, download_images_from_file
-from core.duplicates import handle_duplicates, uniquify_all_images, uniquify_duplicates
+from core.downloader import run_download_session
+from core.duplicates import (
+    handle_duplicates,
+    uniquify_all_images,
+    uniquify_duplicates,
+)
 from ui.cli import run_interactive_mode
 from utils.logger import logger
 
@@ -24,57 +31,57 @@ from utils.logger import logger
 def create_argument_parser():
     """Создает и настраивает парсер аргументов командной строки."""
     parser = argparse.ArgumentParser(
-        description="Async Image Downloader and Processor.")
+        description="Async Image Downloader and Processor."
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # Команда download
+    # --- Команда download ---
     p_download = subparsers.add_parser(
-        "download", help="Download images from a file or URLs.")
-    p_download.add_argument(
-        "-f", "--file", type=Path, help="Path to a file with URLs."
+        "download",
+        help="Скачать изображения по списку URL."
     )
     p_download.add_argument(
-        "-u", "--urls", nargs='+', help="List of URLs to download."
-    )
-    p_download.add_argument(
-        "-d",
-        "--dest",
-        default="manual_downloads",
-        help="Destination folder name.",
+        "urls",
+        nargs='+',
+        help=(
+            "Список URL для скачивания, разделенных пробелами."
+        ),
     )
     p_download.add_argument(
         "-s",
         "--start-index",
         type=int,
         default=1000,
-        help="Starting index for image filenames (default: 1000).",
+        help="Начальный индекс для именования файлов (по умолчанию: 1000).",
     )
     p_download.add_argument(
-        "--delay",
-        type=float,
-        default=0,
-        help="Delay between requests in seconds (default: 0, "
-        "recommended 1-3 for Avito).",
+        "--retries",
+        type=int,
+        default=3,
+        help="Количество повторных попыток при ошибках (по умолчанию: 3).",
     )
 
-    # Команда find-duplicates
     p_find = subparsers.add_parser(
-        "find-duplicates", help="Find and rename duplicate images."
+        "find-duplicates",
+        help="Find and rename duplicate images."
     )
     p_find.add_argument("directory", type=Path, help="Directory to process.")
 
-    # Команда uniquify
     p_uniq = subparsers.add_parser(
-        "uniquify", help="Find and modify duplicate images to make them unique."
+        "uniquify",
+        help=(
+            "Find and modify duplicate images to make them unique."
+        ),
     )
     p_uniq.add_argument("directory", type=Path, help="Directory to process.")
 
-    # Команда uniquify-all
     p_uniq_all = subparsers.add_parser(
         "uniquify-all", help="Uniquify all images in directory."
     )
     p_uniq_all.add_argument(
-        "directory", type=Path, help="Directory to process."
+        "directory",
+        type=Path,
+        help="Directory to process."
     )
 
     return parser
@@ -83,22 +90,13 @@ def create_argument_parser():
 def handle_cli_command(args):
     """
     Обрабатывает команды CLI режима.
-
-    Args:
-        args: Аргументы командной строки
-
-    Returns:
-        Корутина для выполнения или None
     """
     if args.command == "download":
-        if args.file:
-            return download_images_from_file(
-                args.file, args.start_index, args.delay
-            )
-        elif args.urls:
-            return download_images_for_folder(
-                args.dest, args.urls, args.start_index, args.delay
-            )
+        return run_download_session(
+            urls=args.urls,
+            start_index=args.start_index,
+            retries=args.retries
+        )
     elif args.command == "find-duplicates":
         return handle_duplicates(args.directory)
     elif args.command == "uniquify":
@@ -111,12 +109,10 @@ def handle_cli_command(args):
 
 def main():
     """Главная функция приложения."""
-    # Проверяем, были ли переданы аргументы командной строки
     if len(sys.argv) > 1:
         # ----- РЕЖИМ С АРГУМЕНТАМИ (ДЛЯ АВТОМАТИЗАЦИИ) -----
         parser = create_argument_parser()
         args = parser.parse_args()
-
         main_coro = handle_cli_command(args)
 
         if main_coro:
@@ -124,17 +120,14 @@ def main():
             asyncio.run(main_coro)
             end_time = datetime.now()
             logger.info(
-                f'Время выполнения программы: {end_time - start_time}.'
-            )
+                f'Время выполнения программы: {end_time - start_time}.')
     else:
         # ----- ИНТЕРАКТИВНЫЙ РЕЖИМ (ДЛЯ ЧЕЛОВЕКА) -----
         logger.info("Запуск в интерактивном режиме...")
         start_time = datetime.now()
         asyncio.run(run_interactive_mode())
         end_time = datetime.now()
-        logger.info(
-            f'Время выполнения программы: {end_time - start_time}.'
-        )
+        logger.info(f'Время выполнения программы: {end_time - start_time}.')
 
 
 if __name__ == '__main__':
