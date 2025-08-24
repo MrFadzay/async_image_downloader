@@ -2,13 +2,17 @@
 Модуль для отображения прогресса выполнения длительных операций.
 """
 import asyncio
-from typing import Optional, AsyncGenerator, Dict, Any
+import threading
+from typing import Optional, AsyncGenerator, Dict, Any, TYPE_CHECKING
 from contextlib import asynccontextmanager
 
 from tqdm.asyncio import tqdm
 from tqdm import tqdm as sync_tqdm
 
 from utils.logger import logger
+
+if TYPE_CHECKING:
+    from utils.session_manager import DownloadSessionManager
 
 
 class ProgressTracker:
@@ -130,6 +134,93 @@ class ProgressTracker:
             unit_scale=False,
             colour="cyan"
         )
+    
+    def create_pausable_progress_bar(
+        self, 
+        total: int, 
+        description: str = "Обработка",
+        session_manager: Optional["DownloadSessionManager"] = None
+    ) -> PausableProgressBar:
+        """
+        Создает приостанавливаемый прогресс-бар.
+        
+        Args:
+            total: Общее количество элементов
+            description: Описание процесса
+            session_manager: Менеджер сессий для управления паузой
+            
+        Returns:
+            PausableProgressBar: Прогресс-бар с поддержкой паузы
+        """
+        return PausableProgressBar(total, description, session_manager)
+
+
+class PausableProgressBar:
+    """Прогресс-бар с поддержкой паузы/возобновления."""
+    
+    def __init__(
+        self, 
+        total: int, 
+        description: str = "Обработка",
+        session_manager: Optional["DownloadSessionManager"] = None
+    ):
+        self.total = total
+        self.description = description
+        self.session_manager = session_manager
+        self.progress_bar: Optional[tqdm] = None
+        self.completed = 0
+        self.is_paused = False
+        
+        # Регистрируем коллбэки для паузы/возобновления
+        if self.session_manager:
+            self.session_manager.add_pause_callback(self._on_pause)
+            self.session_manager.add_resume_callback(self._on_resume)
+    
+    def __enter__(self):
+        """Контекстный менеджер - вход."""
+        self.progress_bar = tqdm(
+            total=self.total,
+            desc=self.description,
+            unit="файл",
+            unit_scale=False,
+            colour="green",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+        )
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Контекстный менеджер - выход."""
+        if self.progress_bar:
+            self.progress_bar.close()
+    
+    def update(self, n: int = 1) -> None:
+        """Обновляет прогресс."""
+        if self.progress_bar and not self.is_paused:
+            self.progress_bar.update(n)
+            self.completed += n
+    
+    def set_description(self, desc: str) -> None:
+        """Устанавливает описание прогресс-бара."""
+        if self.progress_bar:
+            self.progress_bar.set_description(desc)
+    
+    def _on_pause(self) -> None:
+        """Коллбэк при паузе."""
+        self.is_paused = True
+        if self.progress_bar:
+            self.progress_bar.set_description(f"⏸️  ПАУЗА - {self.description}")
+    
+    def _on_resume(self) -> None:
+        """Коллбэк при возобновлении."""
+        self.is_paused = False
+        if self.progress_bar:
+            self.progress_bar.set_description(self.description)
+    
+    async def wait_if_paused(self) -> bool:
+        """Ждет если на паузе."""
+        if self.session_manager:
+            return await self.session_manager.wait_if_paused()
+        return True
 
 
 # Глобальный экземпляр трекера прогресса
