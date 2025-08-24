@@ -1,0 +1,48 @@
+[tool.pytest.ini_options]
+# Pytest configuration for async image downloader
+
+# Test discovery
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Async support
+asyncio_mode = "auto"
+
+# Output and reporting
+addopts = [
+    "-v",                        # Verbose output
+    "--tb=short",               # Short traceback format
+    "--strict-markers",         # Strict marker checking
+    "--strict-config",          # Strict config checking
+    "--disable-warnings",       # Disable warnings in test output
+    "--cov=core",              # Coverage for core modules
+    "--cov=utils",             # Coverage for utils modules
+    "--cov=ui",                # Coverage for ui modules
+    "--cov-report=term-missing", # Show missing lines in terminal
+    "--cov-report=html:htmlcov", # HTML coverage report
+    "--cov-fail-under=80",      # Fail if coverage below 80%
+]
+
+# Markers for test organization
+markers = [
+    "unit: Unit tests for individual functions/classes",
+    "integration: Integration tests for component interaction", 
+    "async_test: Tests that require async/await functionality",
+    "network: Tests that require network access",
+    "slow: Tests that take a long time to run",
+    "mock: Tests that use mocking extensively",
+]
+
+# Test filtering
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+# Minimum version
+minversion = "7.0"
+
+# Timeout for tests (in seconds)
+timeout = 300

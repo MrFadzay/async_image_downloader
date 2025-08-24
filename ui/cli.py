@@ -4,7 +4,6 @@
 import re
 from pathlib import Path
 from typing import Any, Callable, Coroutine
-from urllib.parse import urlparse
 
 import questionary
 
@@ -15,31 +14,55 @@ from core.duplicates import (
     uniquify_duplicates,
 )
 from utils.logger import logger
+from utils.validation import validate_download_request
 
 
 def _clean_path_string(path_str: str) -> str:
     """
-    Очищает строку пути от лишних символов.
+    Очищает строку пути от лишних символов и кавычек.
+    
+    Удаляет пробелы, кавычки и служебные символы, которые могут появляться
+    при копировании путей из проводника или терминала.
+    
+    Args:
+        path_str: Необработанная строка пути
+        
+    Returns:
+        str: Очищенная строка пути
     """
-    return path_str.strip().strip('"\'')
+    # Удаляем начальные '& ' и конечные кавычки, которые могут быть добавлены
+    cleaned_path = path_str.strip()
+    if cleaned_path.startswith("& '") and \
+       cleaned_path.endswith("'"):
+        cleaned_path = cleaned_path[3:-1]
+    # Удаляем любые оставшиеся начальные/конечные кавычки
+    return cleaned_path.strip().strip('"\'')
 
 
 def _validate_url(url: str) -> bool:
     """
-    Проверяет корректность URL. Не требует наличия расширения изображения
-    или известного хоста, так как проверка типа контента выполняется
-    позже при скачивании.
+    Проверяет корректность и безопасность URL перед скачиванием.
+    
+    Использует комплексную валидацию включая проверку схемы, безопасности
+    и соответствия поддерживаемым форматам.
+    
+    Args:
+        url: URL для проверки
+        
+    Returns:
+        bool: True если URL корректен и безопасен, False иначе
     """
-    try:
-        parsed = urlparse(url)
-        return bool(parsed.scheme in ['http', 'https'] and parsed.netloc)
-
-    except Exception:
-        return False
+    return validate_download_request(url)
 
 
-async def _handle_new_download_session():
-    """Обрабатывает скачивание изображений, запрашивая URL."""
+async def _handle_new_download_session() -> None:
+    """
+    Обрабатывает интерактивную сессию скачивания изображений.
+    
+    Запрашивает у пользователя URL-адреса, параметры скачивания,
+    выполняет валидацию и запускает процесс скачивания.
+    Поддерживает ввод нескольких URL через различные разделители.
+    """
     urls_str = await questionary.text(
         "Вставьте URL-адреса, разделенные пробелом:",
         validate=lambda text: True if len(
@@ -129,7 +152,7 @@ async def _handle_new_download_session():
 async def _process_directory_action(
     prompt_message: str,
     action_function: Callable[[Path], Coroutine[Any, Any, None]],
-):
+) -> None:
     """
     Универсальный обработчик для действий с директориями.
     Запрашивает путь, проверяет его и выполняет переданное действие.
@@ -148,7 +171,7 @@ async def _process_directory_action(
             logger.error(f"Ошибка при обработке пути '{dir_path_str}': {e}")
 
 
-async def _handle_duplicates_menu():
+async def _handle_duplicates_menu() -> None:
     """Обрабатывает меню работы с дубликатами."""
     action = await questionary.select(
         "Выберите действие с дубликатами:",
@@ -171,8 +194,14 @@ async def _handle_duplicates_menu():
         )
 
 
-async def run_interactive_mode():
-    """Запускает интерактивный режим с вопросами к пользователю."""
+async def run_interactive_mode() -> None:
+    """
+    Запускает интерактивный режим работы с меню выбора действий.
+    
+    Предоставляет пользователю возможность выбрать между скачиванием изображений,
+    обработкой дубликатов и уникализацией изображений.
+    Циклически отображает меню до выбора пользователем опции «Выход».
+    """
     while True:
         command = await questionary.select(
             "Что вы хотите сделать?",

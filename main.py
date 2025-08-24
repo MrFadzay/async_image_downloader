@@ -12,6 +12,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Coroutine, Any
 
 # --- Настройка для PyInstaller ---
 if getattr(sys, 'frozen', False):
@@ -28,8 +29,16 @@ from ui.cli import run_interactive_mode
 from utils.logger import logger
 
 
-def create_argument_parser():
-    """Создает и настраивает парсер аргументов командной строки."""
+def create_argument_parser() -> argparse.ArgumentParser:
+    """
+    Создает и настраивает парсер аргументов командной строки.
+    
+    Определяет команды download, find-duplicates, uniquify и uniquify-all
+    с соответствующими параметрами для автоматизации работы.
+    
+    Returns:
+        argparse.ArgumentParser: Настроенный парсер аргументов
+    """
     parser = argparse.ArgumentParser(
         description="Async Image Downloader and Processor."
     )
@@ -87,9 +96,18 @@ def create_argument_parser():
     return parser
 
 
-def handle_cli_command(args):
+def handle_cli_command(args: argparse.Namespace) -> Optional[Coroutine[Any, Any, None]]:
     """
-    Обрабатывает команды CLI режима.
+    Обрабатывает команды CLI режима и возвращает соответствующую корутину.
+    
+    Маршрутизирует запросы на соответствующие функции основных модулей
+    на основе выбранной команды и переданных параметров.
+    
+    Args:
+        args: Объект с параметрами командной строки от argparse
+        
+    Returns:
+        Coroutine или None: Корутина для выполнения или None для неизвестных команд
     """
     if args.command == "download":
         return run_download_session(
@@ -107,8 +125,13 @@ def handle_cli_command(args):
     return None
 
 
-def main():
-    """Главная функция приложения."""
+def main() -> None:
+    """
+    Главная функция приложения, определяющая режим работы.
+    
+    Автоматически выбирает между CLI режимом (при наличии аргументов)
+    и интерактивным режимом (без аргументов). Отслеживает время выполнения.
+    """
     if len(sys.argv) > 1:
         # ----- РЕЖИМ С АРГУМЕНТАМИ (ДЛЯ АВТОМАТИЗАЦИИ) -----
         parser = create_argument_parser()

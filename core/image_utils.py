@@ -5,7 +5,7 @@ import asyncio
 import io
 import random
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Callable, Dict
 
 import aiofiles
 import aiofiles.os
@@ -19,6 +19,7 @@ from utils.config import (
     SUPPORTED_IMAGE_EXTENSIONS,
 )
 from utils.logger import logger
+from utils.validation import validate_image_size, validate_file_extension
 
 
 def _calculate_perceptual_hash_sync(
@@ -45,16 +46,27 @@ def _calculate_perceptual_hash_sync(
 async def get_file_hashes(
     directory: Path,
 ) -> Tuple[
-    dict[Tuple[str, str, str], Path], List[Tuple[Path, Tuple[str, str, str], Path]]
+    dict[Tuple[str, str, str], Path], 
+    List[Tuple[Path, Tuple[str, str, str], Path]]
 ]:
     """
-    Асинхронно вычисляет перцептивные хеши для всех файлов в директории.
-    Теперь использует комбинацию из трех хешей для более точного определения дубликатов.
-
+    Асинхронно вычисляет перцептивные хеши для всех изображений в директории.
+    
+    Оптимизированная версия с O(n log n) сложностью для поиска дубликатов.
+    Использует комбинацию phash, dhash и average_hash для точности.
+    
+    Args:
+        directory: Путь к директории с изображениями
+    
     Returns:
         Tuple содержащий:
         - Словарь уникальных хешей и путей к файлам
         - Список дубликатов (путь, хеш, путь к оригиналу)
+    
+    Note:
+        - Порог сходства: SIMILARITY_THRESHOLD (обычно 2 из 3 хешей)
+        - Игнорирует скрытые файлы и неподдерживаемые форматы
+        - Использует индексы для быстрого поиска потенциальных совпадений
     """
     loop = asyncio.get_running_loop()
     filepaths_to_process = []
@@ -77,17 +89,34 @@ async def get_file_hashes(
     ]
     hashes_results = await asyncio.gather(*tasks)
 
-    # Словарь для хранения хешей и соответствующих им путей
+    # Оптимизированная структура данных для быстрого поиска дубликатов
     perceptual_hashes: dict[Tuple[str, str, str], Path] = {}
     duplicates = []
+    
+    # Создаем индексы для быстрого поиска по отдельным хешам
+    hash_index: Dict[str, Dict[str, List[Tuple[Tuple[str, str, str], Path]]]] = {
+        'phash': {},  # phash -> [(full_hashes, path), ...]
+        'dhash': {},  # dhash -> [(full_hashes, path), ...]
+        'ahash': {}   # ahash -> [(full_hashes, path), ...]
+    }
 
     for path, hashes in zip(filepaths_to_process, hashes_results):
         if not hashes:
             continue
 
-        # Проверяем, есть ли уже похожие хеши в нашем словаре
+        phash, dhash, ahash = hashes
         is_duplicate = False
-        for existing_hashes, existing_path in perceptual_hashes.items():
+        
+        # Быстрый поиск потенциальных дубликатов через индексы
+        potential_matches = set()
+        
+        # Добавляем все файлы с совпадающими отдельными хешами
+        for hash_value, hash_type in [(phash, 'phash'), (dhash, 'dhash'), (ahash, 'ahash')]:
+            if hash_value in hash_index[hash_type]:
+                potential_matches.update(hash_index[hash_type][hash_value])
+        
+        # Проверяем только потенциальные совпадения
+        for existing_hashes, existing_path in potential_matches:
             # Считаем количество совпадающих хешей
             matching_hashes = sum(
                 1 for i in range(3) if hashes[i] == existing_hashes[i]
@@ -102,6 +131,13 @@ async def get_file_hashes(
         if not is_duplicate:
             # Это новое уникальное изображение
             perceptual_hashes[hashes] = path
+            
+            # Обновляем индексы для будущих поисков
+            for i, hash_type in enumerate(['phash', 'dhash', 'ahash']):
+                hash_value = hashes[i]
+                if hash_value not in hash_index[hash_type]:
+                    hash_index[hash_type][hash_value] = []
+                hash_index[hash_type][hash_value].append((hashes, path))
 
     return perceptual_hashes, duplicates
 
@@ -138,7 +174,7 @@ def _modify_add_noise(image: Image.Image) -> Image.Image:
     return image
 
 
-def get_modification_functions():
+def get_modification_functions() -> List[Callable[[Image.Image], Image.Image]]:
     """Возвращает список доступных функций модификации изображений."""
     return [
         _modify_brightness,
@@ -151,8 +187,34 @@ def get_modification_functions():
 def process_and_save_image_sync(
     image_data: bytes, full_path: Path, content_type: str = ""
 ) -> None:
-    """Синхронная функция для обработки и сохранения изображения с поддержкой разных форматов."""
+    """
+    Синхронная обработка и сохранение изображения с поддержкой разных форматов.
+    
+    Определяет формат по заголовкам, конвертирует в RGB и сохраняет как JPEG.
+    При ошибках обработки сохраняет файл с расширением .unknown.
+    
+    Args:
+        image_data: Байты изображения
+        full_path: Полный путь для сохранения
+        content_type: MIME-тип для отладки (опционально)
+    
+    Raises:
+        ValueError: При превышении ограничений размера или неподдерживаемом расширении
+    
+    Note:
+        - Поддерживаемые форматы: JPEG, PNG, WebP, GIF
+        - Прозрачные изображения конвертируются на белый фон
+        - Все изображения сохраняются как JPEG с качеством 95%
+        - Нераспознанные файлы сохраняются с расширением .unknown
+    """
     try:
+        # Проверяем размер для обработки изображения
+        if not validate_image_size(len(image_data)):
+            raise ValueError(f"Размер изображения превышает ограничения: {len(image_data)} байт")
+        
+        # Проверяем расширение файла
+        if not validate_file_extension(full_path):
+            raise ValueError(f"Неподдерживаемое расширение файла: {full_path.suffix}")
         image_stream = io.BytesIO(image_data)
         image: Image.Image
 
