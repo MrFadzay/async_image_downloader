@@ -1,6 +1,22 @@
 # История изменений
 
-## Версия 2.1.0 (текущая)
+## Версия 2.1.1 (текущая)
+- **Исправления PyInstaller:**
+  - Добавлена зависимость `certifi` в requirements.txt для корректной работы SSL сертификатов
+  - Создан полный async_image_downloader.spec файл со всеми скрытыми импортами
+  - Исправлен GitHub Actions workflow для использования spec файла
+  - Решена критическая ошибка "ModuleNotFoundError: No module named 'certifi'" в собранном исполняемом файле
+- **Улучшения сборки:**
+  - Все зависимости (curl_cffi, aiofiles, PIL, imagehash, scipy, numpy) теперь корректно включаются в bundle
+  - Стабильная работа исполняемого файла на всех поддерживаемых платформах
+  - Автоматическая сборка через GitHub Actions использует правильную конфигурацию
+- **Добавлено тестирование:**
+  - Comprehensive test suite для core functionality
+  - Unit tests для image hashing и duplicate detection
+  - Integration tests для download workflow
+  - pytest configuration и coverage reporting
+
+## Версия 2.1.0
 - **Основные изменения:**
   - Удален "безопасный" режим скачивания для упрощения кодовой базы
   - Оптимизирован единый быстрый режим для максимальной производительности
