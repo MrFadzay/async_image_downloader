@@ -1,9 +1,22 @@
 """
 Настройка логирования для async image downloader.
 """
+
 import logging
 import sys
-from utils.config import BASE_DIR
+from pathlib import Path
+
+
+def get_base_dir() -> Path:
+    """
+    Определяет базовую директорию приложения.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys.executable).parent
+    return Path(__file__).parent.parent
+
+
+BASE_DIR = get_base_dir()
 
 
 def setup_logger(name: str = __name__) -> logging.Logger:
@@ -29,8 +42,8 @@ def setup_logger(name: str = __name__) -> logging.Logger:
 
     # Формат сообщений
     formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
+        "%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # Обработчик для консоли
@@ -38,8 +51,8 @@ def setup_logger(name: str = __name__) -> logging.Logger:
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Обработчик для файла
-    file_handler = logging.FileHandler(BASE_DIR / 'app.log')
+    # Обработчик для файла с UTF-8 кодировкой
+    file_handler = logging.FileHandler(BASE_DIR / "app.log", encoding='utf-8')
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
@@ -47,4 +60,4 @@ def setup_logger(name: str = __name__) -> logging.Logger:
 
 
 # Создаем основной логгер для приложения
-logger = setup_logger('async_image_downloader')
+logger = setup_logger("async_image_downloader")

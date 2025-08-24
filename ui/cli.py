@@ -1,6 +1,7 @@
 """
 Интерактивный CLI интерфейс для async image downloader.
 """
+
 import re
 from pathlib import Path
 from typing import Any, Callable, Coroutine
@@ -22,35 +23,34 @@ from utils.error_handling import get_error_handler
 def _clean_path_string(path_str: str) -> str:
     """
     Очищает строку пути от лишних символов и кавычек.
-    
+
     Удаляет пробелы, кавычки и служебные символы, которые могут появляться
     при копировании путей из проводника или терминала.
-    
+
     Args:
         path_str: Необработанная строка пути
-        
+
     Returns:
         str: Очищенная строка пути
     """
     # Удаляем начальные '& ' и конечные кавычки, которые могут быть добавлены
     cleaned_path = path_str.strip()
-    if cleaned_path.startswith("& '") and \
-       cleaned_path.endswith("'"):
+    if cleaned_path.startswith("& '") and cleaned_path.endswith("'"):
         cleaned_path = cleaned_path[3:-1]
     # Удаляем любые оставшиеся начальные/конечные кавычки
-    return cleaned_path.strip().strip('"\'')
+    return cleaned_path.strip().strip("\"'")
 
 
 def _validate_url(url: str) -> bool:
     """
     Проверяет корректность и безопасность URL перед скачиванием.
-    
+
     Использует комплексную валидацию включая проверку схемы, безопасности
     и соответствия поддерживаемым форматам.
-    
+
     Args:
         url: URL для проверки
-        
+
     Returns:
         bool: True если URL корректен и безопасен, False иначе
     """
@@ -60,15 +60,14 @@ def _validate_url(url: str) -> bool:
 async def _handle_new_download_session() -> None:
     """
     Обрабатывает интерактивную сессию скачивания изображений.
-    
+
     Запрашивает у пользователя URL-адреса, параметры скачивания,
     выполняет валидацию и запускает процесс скачивания.
     Поддерживает ввод нескольких URL через различные разделители.
     """
     urls_str = await questionary.text(
         "Вставьте URL-адреса, разделенные пробелом:",
-        validate=lambda text: True if len(
-            text) > 0 else "Пожалуйста, введите хотя бы один URL."
+        validate=lambda text: True if len(text) > 0 else "Пожалуйста, введите хотя бы один URL.",
     ).ask_async()
 
     if urls_str is None:
@@ -77,7 +76,7 @@ async def _handle_new_download_session() -> None:
 
     urls = []
     skipped_urls = []
-    for url_candidate in re.split(r'[\s;,|]+', urls_str.strip()):
+    for url_candidate in re.split(r"[\s;,|]+", urls_str.strip()):
         if not url_candidate:
             continue
 
@@ -97,19 +96,16 @@ async def _handle_new_download_session() -> None:
         return
 
     total_urls = len(urls)
-    logger.info(
-        f"Найдено корректных URL: {total_urls}"
-    )
+    logger.info(f"Найдено корректных URL: {total_urls}")
 
     if skipped_urls:
         logger.warning(
             "Пропущено некорректных URL: %d\nПримеры: %s",
             len(skipped_urls),
-            ", ".join(skipped_urls[:3])
+            ", ".join(skipped_urls[:3]),
         )
         confirm_continue = await questionary.confirm(
-            "Продолжить с найденными URL?",
-            default=True
+            "Продолжить с найденными URL?", default=True
         ).ask_async()
         if not confirm_continue:
             logger.info("Операция отменена.")
@@ -125,7 +121,7 @@ async def _handle_new_download_session() -> None:
     start_index_str = await questionary.text(
         "Введите начальный индекс для изображений (1-9999):",
         default="1000",
-        validate=lambda text: validate_number(text, 1, 9999)
+        validate=lambda text: validate_number(text, 1, 9999),
     ).ask_async()
     if start_index_str is None:
         logger.warning("Операция отменена.")
@@ -135,7 +131,7 @@ async def _handle_new_download_session() -> None:
     retries_str = await questionary.text(
         "Введите количество повторных попыток (1-10):",
         default="3",
-        validate=lambda text: validate_number(text, 1, 10)
+        validate=lambda text: validate_number(text, 1, 10),
     ).ask_async()
     if retries_str is None:
         logger.warning("Операция отменена.")
@@ -144,10 +140,9 @@ async def _handle_new_download_session() -> None:
 
     # Спрашиваем о включении паузы/возобновления
     enable_pause_resume = await questionary.confirm(
-        "Включить поддержку паузы/возобновления? (Пауза по Ctrl+C)",
-        default=True
+        "Включить поддержку паузы/возобновления? (Пауза по Ctrl+C)", default=True
     ).ask_async()
-    
+
     if enable_pause_resume is None:
         logger.warning("Операция отменена.")
         return
@@ -159,20 +154,13 @@ async def _handle_new_download_session() -> None:
     logger.info(f"* Пауза/возобновление: {'Да' if enable_pause_resume else 'Нет'}")
 
     logger.info("\nНачинаю скачивание...")
-    
+
     if enable_pause_resume:
         await run_download_session_with_pause(
-            urls=urls,
-            start_index=start_index,
-            retries=retries,
-            enable_pause_resume=True
+            urls=urls, start_index=start_index, retries=retries, enable_pause_resume=True
         )
     else:
-        await run_download_session(
-            urls=urls,
-            start_index=start_index,
-            retries=retries
-        )
+        await run_download_session(urls=urls, start_index=start_index, retries=retries)
 
 
 async def _process_directory_action(
@@ -188,7 +176,7 @@ async def _process_directory_action(
     print("   • Можно ввести как абсолютный, так и относительный путь")
     print("   • Поддерживаются пути с кириллицей и пробелами")
     print("   • Пример: ./images или C:/Users/Name/Pictures")
-    
+
     dir_path_str = await questionary.path(prompt_message).ask_async()
 
     if dir_path_str:
@@ -202,21 +190,25 @@ async def _process_directory_action(
                 print("   • Убедитесь, что директория создана")
                 print("   • Попробуйте использовать абсолютный путь")
                 return
-                
+
             if not path_obj.is_dir():
                 print(f"\n❌ Ошибка: '{dir_path_str}' не является директорией")
                 print("📝 Помощь: Укажите путь к папке, а не к файлу")
                 return
-            
+
             # Показываем информацию о директории
             try:
                 files = list(path_obj.glob("*"))
-                image_files = [f for f in files if f.suffix.lower() in ['.jpg', '.jpeg', '.png', '.webp', '.gif']]
+                image_files = [
+                    f
+                    for f in files
+                    if f.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+                ]
                 print(f"\n📊 Информация о директории:")
                 print(f"   📁 Путь: {path_obj.absolute()}")
                 print(f"   📄 Всего файлов: {len(files)}")
                 print(f"   🖼️ Изображений: {len(image_files)}")
-                
+
                 if len(image_files) == 0:
                     UserGuidance.show_help_for_issue("no_images_found")
                     return
@@ -224,7 +216,7 @@ async def _process_directory_action(
                 print(f"\n⚠️ Предупреждение: Нет прав для чтения директории")
                 UserGuidance.show_help_for_issue("permission_denied")
                 return
-            
+
             await action_function(path_obj)
         except Exception as e:
             error_handler = get_error_handler()
@@ -237,29 +229,23 @@ async def _handle_duplicates_menu() -> None:
     """Обрабатывает меню работы с дубликатами."""
     action = await questionary.select(
         "Выберите действие с дубликатами:",
-        choices=[
-            "Найти и переименовать дубликаты",
-            "Уникализировать дубликаты",
-            "Назад"
-        ]
+        choices=["Найти и переименовать дубликаты", "Уникализировать дубликаты", "Назад"],
     ).ask_async()
 
     if action == "Найти и переименовать дубликаты":
         await _process_directory_action(
-            "Укажите путь к директории для проверки:",
-            handle_duplicates
+            "Укажите путь к директории для проверки:", handle_duplicates
         )
     elif action == "Уникализировать дубликаты":
         await _process_directory_action(
-            "Укажите путь к директории для уникализации дубликатов:",
-            uniquify_duplicates
+            "Укажите путь к директории для уникализации дубликатов:", uniquify_duplicates
         )
 
 
 async def run_interactive_mode() -> None:
     """
     Запускает интерактивный режим работы с меню выбора действий.
-    
+
     Предоставляет пользователю возможность выбрать между скачиванием изображений,
     обработкой дубликатов и уникализацией изображений.
     Циклически отображает меню до выбора пользователем опции «Выход».
@@ -269,12 +255,7 @@ async def run_interactive_mode() -> None:
     while True:
         command = await questionary.select(
             "Что вы хотите сделать?",
-            choices=[
-                "Скачать изображения",
-                "Работа с дубликатами",
-                "Уникализация",
-                "Выход"
-            ]
+            choices=["Скачать изображения", "Работа с дубликатами", "Уникализация", "Выход"],
         ).ask_async()
 
         if command == "Скачать изображения":
@@ -287,8 +268,7 @@ async def run_interactive_mode() -> None:
             UserGuidance.show_operation_tips("uniquify_all")
             UserGuidance.show_safety_warning("uniquify_all")
             await _process_directory_action(
-                "Укажите путь к директории для уникализации всех изображений:",
-                uniquify_all_images
+                "Укажите путь к директории для уникализации всех изображений:", uniquify_all_images
             )
         elif command == "Выход" or command is None:
             logger.info("Завершение работы.")

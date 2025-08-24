@@ -1,6 +1,7 @@
 """
 Утилиты для работы с изображениями: хеширование и модификации.
 """
+
 import asyncio
 import io
 import random
@@ -12,7 +13,7 @@ import aiofiles.os
 import imagehash
 from PIL import Image, ImageEnhance
 
-from utils.config import (
+from utils.config_manager import (
     BRIGHTNESS_FACTOR_RANGE,
     CONTRAST_FACTOR_RANGE,
     SIMILARITY_THRESHOLD,
@@ -46,24 +47,21 @@ def _calculate_perceptual_hash_sync(
 
 async def get_file_hashes(
     directory: Path,
-) -> Tuple[
-    dict[Tuple[str, str, str], Path], 
-    List[Tuple[Path, Tuple[str, str, str], Path]]
-]:
+) -> Tuple[dict[Tuple[str, str, str], Path], List[Tuple[Path, Tuple[str, str, str], Path]]]:
     """
     Асинхронно вычисляет перцептивные хеши для всех изображений в директории.
-    
+
     Оптимизированная версия с O(n log n) сложностью для поиска дубликатов.
     Использует комбинацию phash, dhash и average_hash для точности.
-    
+
     Args:
         directory: Путь к директории с изображениями
-    
+
     Returns:
         Tuple содержащий:
         - Словарь уникальных хешей и путей к файлам
         - Список дубликатов (путь, хеш, путь к оригиналу)
-    
+
     Note:
         - Порог сходства: SIMILARITY_THRESHOLD (обычно 2 из 3 хешей)
         - Игнорирует скрытые файлы и неподдерживаемые форматы
@@ -76,11 +74,13 @@ async def get_file_hashes(
         full_path = directory / filepath_name
         if await aiofiles.os.path.isfile(full_path):
             # Игнорируем скрытые файлы, такие как .DS_Store
-            if filepath_name.startswith('.'):
+            if filepath_name.startswith("."):
                 continue
             # Игнорируем файлы без расширений изображений
-            if not any(filepath_name.lower().endswith(ext) for ext in
-                       ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']):
+            if not any(
+                filepath_name.lower().endswith(ext)
+                for ext in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"]
+            ):
                 continue
             filepaths_to_process.append(full_path)
 
@@ -93,12 +93,12 @@ async def get_file_hashes(
     # Оптимизированная структура данных для быстрого поиска дубликатов
     perceptual_hashes: dict[Tuple[str, str, str], Path] = {}
     duplicates = []
-    
+
     # Создаем индексы для быстрого поиска по отдельным хешам
     hash_index: Dict[str, Dict[str, List[Tuple[Tuple[str, str, str], Path]]]] = {
-        'phash': {},  # phash -> [(full_hashes, path), ...]
-        'dhash': {},  # dhash -> [(full_hashes, path), ...]
-        'ahash': {}   # ahash -> [(full_hashes, path), ...]
+        "phash": {},  # phash -> [(full_hashes, path), ...]
+        "dhash": {},  # dhash -> [(full_hashes, path), ...]
+        "ahash": {},  # ahash -> [(full_hashes, path), ...]
     }
 
     for path, hashes in zip(filepaths_to_process, hashes_results):
@@ -107,21 +107,20 @@ async def get_file_hashes(
 
         phash, dhash, ahash = hashes
         is_duplicate = False
-        
+
         # Быстрый поиск потенциальных дубликатов через индексы
         potential_matches = set()
-        
+
         # Добавляем все файлы с совпадающими отдельными хешами
-        for hash_value, hash_type in [(phash, 'phash'), (dhash, 'dhash'), (ahash, 'ahash')]:
+        for hash_value, hash_type in [(phash, "phash"), (dhash, "dhash"), (ahash, "ahash")]:
             if hash_value in hash_index[hash_type]:
                 potential_matches.update(hash_index[hash_type][hash_value])
-        
+
         # Проверяем только потенциальные совпадения
         for existing_hashes, existing_path in potential_matches:
             # Считаем количество совпадающих хешей
-            matching_hashes = sum(
-                1 for i in range(3) if hashes[i] == existing_hashes[i]
-            )
+            matching_hashes = sum(1 for i in range(
+                3) if hashes[i] == existing_hashes[i])
 
             if matching_hashes >= SIMILARITY_THRESHOLD:
                 # Нашли дубликат
@@ -132,9 +131,9 @@ async def get_file_hashes(
         if not is_duplicate:
             # Это новое уникальное изображение
             perceptual_hashes[hashes] = path
-            
+
             # Обновляем индексы для будущих поисков
-            for i, hash_type in enumerate(['phash', 'dhash', 'ahash']):
+            for i, hash_type in enumerate(["phash", "dhash", "ahash"]):
                 hash_value = hashes[i]
                 if hash_value not in hash_index[hash_type]:
                     hash_index[hash_type][hash_value] = []
@@ -145,14 +144,16 @@ async def get_file_hashes(
 
 def _modify_brightness(image: Image.Image) -> Image.Image:
     """Слегка изменяет яркость изображения."""
-    enhancer = ImageEnhance.Brightness(image)
+    image_copy = image.copy()
+    enhancer = ImageEnhance.Brightness(image_copy)
     factor = 1 + random.uniform(*BRIGHTNESS_FACTOR_RANGE)
     return enhancer.enhance(factor)
 
 
 def _modify_contrast(image: Image.Image) -> Image.Image:
     """Слегка изменяет контраст изображения."""
-    enhancer = ImageEnhance.Contrast(image)
+    image_copy = image.copy()
+    enhancer = ImageEnhance.Contrast(image_copy)
     factor = 1 + random.uniform(*CONTRAST_FACTOR_RANGE)
     return enhancer.enhance(factor)
 
@@ -167,12 +168,13 @@ def _modify_crop(image: Image.Image) -> Image.Image:
 
 def _modify_add_noise(image: Image.Image) -> Image.Image:
     """Добавляет один 'шумный' пиксель в случайном месте."""
-    width, height = image.size
+    image_copy = image.copy()
+    width, height = image_copy.size
     px, py = random.randint(0, width - 1), random.randint(0, height - 1)
     noise_color = (random.randint(0, 255), random.randint(
         0, 255), random.randint(0, 255))
-    image.putpixel((px, py), noise_color)
-    return image
+    image_copy.putpixel((px, py), noise_color)
+    return image_copy
 
 
 def get_modification_functions() -> List[Callable[[Image.Image], Image.Image]]:
@@ -185,51 +187,52 @@ def get_modification_functions() -> List[Callable[[Image.Image], Image.Image]]:
     ]
 
 
-def process_and_save_image_sync(
-    image_data: bytes, full_path: Path, content_type: str = ""
-) -> None:
+def process_and_save_image_sync(image_data: bytes, full_path: Path, content_type: str = "") -> None:
     """
     Синхронная обработка и сохранение изображения с поддержкой разных форматов.
-    
+
     Определяет формат по заголовкам, конвертирует в RGB и сохраняет как JPEG.
     При ошибках обработки сохраняет файл с расширением .unknown.
-    
+
     Args:
         image_data: Байты изображения
         full_path: Полный путь для сохранения
         content_type: MIME-тип для отладки (опционально)
-    
+
     Raises:
         ValueError: При превышении ограничений размера или неподдерживаемом расширении
-    
+
     Note:
         - Поддерживаемые форматы: JPEG, PNG, WebP, GIF
         - Прозрачные изображения конвертируются на белый фон
         - Все изображения сохраняются как JPEG с качеством 95%
         - Нераспознанные файлы сохраняются с расширением .unknown
     """
+    # Проверяем размер для обработки изображения
+    if not validate_image_size(len(image_data)):
+        raise ValueError(
+            f"Размер изображения превышает ограничения: {len(image_data)} байт")
+
+    # Проверяем расширение файла
+    if not validate_file_extension(full_path):
+        raise ValueError(
+            f"Неподдерживаемое расширение файла: {full_path.suffix}")
+
     try:
-        # Проверяем размер для обработки изображения
-        if not validate_image_size(len(image_data)):
-            raise ValueError(f"Размер изображения превышает ограничения: {len(image_data)} байт")
-        
-        # Проверяем расширение файла
-        if not validate_file_extension(full_path):
-            raise ValueError(f"Неподдерживаемое расширение файла: {full_path.suffix}")
         image_stream = io.BytesIO(image_data)
         image: Image.Image
 
         # Определяем формат по заголовкам файла
-        if image_data.startswith(b'\xff\xd8\xff'):
+        if image_data.startswith(b"\xff\xd8\xff"):
             # JPEG
             image = Image.open(image_stream)
-        elif image_data.startswith(b'\x89PNG'):
+        elif image_data.startswith(b"\x89PNG"):
             # PNG
             image = Image.open(image_stream)
-        elif image_data.startswith(b'RIFF') and b'WEBP' in image_data[:20]:
+        elif image_data.startswith(b"RIFF") and b"WEBP" in image_data[:20]:
             # WebP
             image = Image.open(image_stream)
-        elif image_data.startswith(b'GIF'):
+        elif image_data.startswith(b"GIF"):
             # GIF
             image = Image.open(image_stream)
         else:
@@ -237,16 +240,18 @@ def process_and_save_image_sync(
             image = Image.open(image_stream)
 
         # Конвертируем в RGB если нужно
-        if image.mode in ('RGBA', 'LA', 'P'):
+        if image.mode in ("RGBA", "LA", "P"):
             # Создаем белый фон для прозрачных изображений
-            background = Image.new('RGB', image.size, (255, 255, 255))
-            if image.mode == 'P':
-                image = image.convert('RGBA')
-            background.paste(image, mask=image.split()
-                             [-1] if image.mode in ('RGBA', 'LA') else None)
+            background = Image.new("RGB", image.size, (255, 255, 255))
+            if image.mode == "P":
+                image = image.convert("RGBA")
+            background.paste(
+                image, mask=image.split(
+                )[-1] if image.mode in ("RGBA", "LA") else None
+            )
             image = background.copy()  # Добавлено .copy() для избежания проблем с ссылками
-        elif image.mode != 'RGB':
-            image = image.convert('RGB')
+        elif image.mode != "RGB":
+            image = image.convert("RGB")
 
         # Сохраняем как JPEG
         image.save(full_path, format="JPEG", quality=95)
@@ -255,7 +260,7 @@ def process_and_save_image_sync(
         # Обрабатываем ошибку с помощью улучшенного обработчика
         error_handler = get_error_handler()
         error_handler.handle_image_error(e, full_path, "image_processing")
-        
+
         # Дополнительная информация для отладки
         logger.error(
             f"Ошибка при обработке изображения '{full_path.name}': {e}. "
@@ -265,7 +270,7 @@ def process_and_save_image_sync(
         # для последующего анализа.
         unknown_path = full_path.parent / f"{full_path.name}.unknown"
         try:
-            with open(unknown_path, 'wb') as f:
+            with open(unknown_path, "wb") as f:
                 f.write(image_data)
             logger.warning(
                 f"Неидентифицированный файл сохранен как: {unknown_path}")
@@ -281,7 +286,7 @@ async def get_image_files(directory: Path) -> List[Path]:
         full_path = directory / filepath_name
         if await aiofiles.os.path.isfile(full_path):
             # Игнорируем скрытые файлы, такие как .DS_Store
-            if filepath_name.startswith('.'):
+            if filepath_name.startswith("."):
                 continue
             # Проверяем расширение файла
             if full_path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:

@@ -28,7 +28,7 @@
 
 ### Вариант 2: Запуск из исходного кода
 1. Клонируйте репозиторий: `git clone https://github.com/mrfadzay/async_image_downloader.git`
-2. Установите зависимости: `pip install -r requirements.txt`
+2. Установите зависимости: `pip install -e .`
 3. Запустите программу: `python main.py`
 
 ## Проблема
@@ -78,7 +78,7 @@
 
 2.  **Установите зависимости:**
     ```bash
-    pip install -r requirements.txt
+    pip install -e .
     ```
 
 3.  **Создание исполняемого файла (опционально):**
