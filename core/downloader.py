@@ -26,6 +26,8 @@ from utils.validation import (
 )
 from utils.resource_manager import get_resource_manager
 from utils.progress import get_progress_tracker, show_download_stats
+from utils.session_manager import get_session_manager
+from utils.error_handling import get_error_handler
 
 
 async def create_dir(dir_name: Path) -> None:
@@ -205,21 +207,23 @@ async def download_file(
                 return True
                 
         except errors.RequestsError as e:
+            error_handler = get_error_handler()
             if e.response and e.response.status_code == 429:
                 attempt += 1
                 if attempt < retries:
                     wait_time = (2 ** attempt) + random.uniform(0, 1)
-                    logger.warning(
-                        "Статус 429 для %s. "
-                        "Попытка %d/%d через %.2f сек.",
-                        url, attempt, retries, wait_time,
-                    )
+                    print(f"⏳ Сервер ограничивает запросы для {url}")
+                    print(f"   Повторная попытка {attempt}/{retries} через {wait_time:.1f} сек...")
                     # Ожидание вне семафора
                     await asyncio.sleep(wait_time)
                     continue
-            logger.error("Ошибка при скачивании %s: %s", url, e)
+                else:
+                    print(f"❌ Превышен лимит попыток для {url} (429 Too Many Requests)")
+            else:
+                error_handler.handle_download_error(e, url, attempt, retries)
         except Exception as e:
-            logger.error("Неизвестная ошибка для %s: %s", url, e)
+            error_handler = get_error_handler()
+            error_handler.handle_download_error(e, url, attempt, retries)
         
         attempt += 1
         if attempt < retries:
@@ -227,6 +231,65 @@ async def download_file(
             await asyncio.sleep(1)
     
     return False
+
+
+async def download_file_with_session(
+    session: AsyncSession,
+    semaphore: asyncio.Semaphore,
+    url: str,
+    target_dir: Path,
+    file_index: int,
+    retries: int,
+    progress_bar,
+    session_manager
+) -> Tuple[bool, float]:
+    """
+    Асинхронно скачивает одно изображение с поддержкой паузы/возобновления.
+    
+    Args:
+        session: HTTP сессия
+        semaphore: Семафор для ограничения подключений
+        url: URL для скачивания
+        target_dir: Директория для сохранения
+        file_index: Индекс файла
+        retries: Количество повторных попыток
+        progress_bar: Объект прогресс-бара для обновления
+        session_manager: Менеджер сессий для управления паузой
+        
+    Returns:
+        Tuple[bool, float]: (успех, размер_в_мб)
+    """
+    # Проверяем, нужно ли ждать возобновления
+    if not await session_manager.wait_if_paused():
+        return False, 0.0  # Операция отменена
+    
+    success = await download_file(
+        session, semaphore, url, target_dir, file_index, retries
+    )
+    
+    # Обновляем прогресс сессии
+    await session_manager.update_progress(url, success)
+    
+    # Определяем размер файла для статистики
+    size_mb = 0.0
+    if success:
+        try:
+            base_filename = f"{file_index}"
+            full_path = await generate_unique_filename(target_dir, base_filename)
+            # Пытаемся найти реальный файл (может иметь суффикс .1, .2 и т.д.)
+            for potential_path in target_dir.glob(f"{file_index}*.jpeg"):
+                if await aiofiles.os.path.exists(potential_path):
+                    stat_info = await aiofiles.os.stat(potential_path)
+                    size_mb = stat_info.st_size / (1024 * 1024)
+                    break
+        except Exception as e:
+            logger.debug(f"Не удалось получить размер файла для {url}: {e}")
+    
+    # Обновляем прогресс
+    if hasattr(progress_bar, 'update'):
+        progress_bar.update(1)
+    
+    return success, size_mb
 
 
 async def download_file_with_progress(
@@ -348,6 +411,146 @@ async def download_images(
     return successful_downloads
 
 
+async def download_images_with_session(
+    session: AsyncSession,
+    urls: List[str],
+    target_dir: Path,
+    start_index: int = 1000,
+    retries: int = 3,
+    enable_pause_resume: bool = True
+) -> int:
+    """
+    Асинхронно скачивает список URL с поддержкой паузы/возобновления.
+    
+    Args:
+        session: HTTP сессия
+        urls: Список URL для скачивания
+        target_dir: Директория для сохранения
+        start_index: Начальный индекс файлов
+        retries: Количество повторных попыток
+        enable_pause_resume: Включить поддержку паузы/возобновления
+        
+    Returns:
+        int: Количество успешно скачанных изображений
+    """
+    await create_dir(target_dir)
+    
+    # Инициализируем менеджер сессий
+    session_manager = get_session_manager() if enable_pause_resume else None
+    
+    if session_manager:
+        # Создаем новую сессию
+        session_id = await session_manager.create_session(
+            urls=urls,
+            start_index=start_index,
+            retries=retries,
+            target_dir=target_dir
+        )
+        logger.info(f"Создана сессия скачивания: {session_id}")
+        logger.info("📌 Нажмите Ctrl+C для паузы. Повторное нажатие для возобновления")
+    
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+    logger.info(
+        "Начинаем скачивание %d изображений в '%s'...",
+        len(urls),
+        target_dir,
+    )
+    
+    # Инициализируем прогресс-трекер
+    progress_tracker = get_progress_tracker()
+    successful_downloads = 0
+    failed_downloads = 0
+    total_size_mb = 0.0
+    start_time = time.time()
+    
+    try:
+        if enable_pause_resume and session_manager:
+            # Используем приостанавливаемый прогресс-бар
+            with progress_tracker.create_pausable_progress_bar(
+                len(urls), "Скачивание изображений", 
+                session_manager
+            ) as progress_bar:
+                tasks = []
+                for i, url in enumerate(urls):
+                    task = asyncio.create_task(
+                        download_file_with_session(
+                            session,
+                            semaphore,
+                            url,
+                            target_dir,
+                            start_index + i,
+                            retries,
+                            progress_bar,
+                            session_manager
+                        )
+                    )
+                    tasks.append(task)
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+        else:
+            # Обычный режим без паузы/возобновления
+            async with progress_tracker.track_download_progress(
+                len(urls), "Скачивание изображений"
+            ) as progress_bar:
+                tasks = []
+                for i, url in enumerate(urls):
+                    task = asyncio.create_task(
+                        download_file_with_progress(
+                            session,
+                            semaphore,
+                            url,
+                            target_dir,
+                            start_index + i,
+                            retries,
+                            progress_bar
+                        )
+                    )
+                    tasks.append(task)
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Подсчитываем статистику
+        for result in results:
+            if isinstance(result, tuple) and len(result) == 2:
+                success, size_mb = result
+                if success:
+                    successful_downloads += 1
+                    total_size_mb += size_mb
+                else:
+                    failed_downloads += 1
+            elif isinstance(result, Exception):
+                failed_downloads += 1
+                logger.error(f"Исключение при скачивании: {result}")
+            else:
+                failed_downloads += 1
+    
+    finally:
+        # Отображаем статистику
+        elapsed_time = time.time() - start_time
+        await show_download_stats(
+            downloaded=successful_downloads,
+            skipped=0,
+            errors=failed_downloads,
+            total_size_mb=total_size_mb,
+            elapsed_time=elapsed_time
+        )
+        
+        # Очищаем сессию при завершении
+        if session_manager:
+            if session_manager.cancel_event.is_set():
+                logger.info("🗿 Скачивание отменено пользователем")
+            else:
+                await session_manager.cleanup_session()
+                logger.info("✅ Скачивание завершено успешно")
+    
+    logger.info(
+        "Всего успешно скачано: %d из %d изображений.",
+        successful_downloads,
+        len(urls),
+    )
+    return successful_downloads
+
+
 async def run_download_session(
     urls: List[str],
     start_index: int = 1000,
@@ -437,6 +640,102 @@ async def run_download_session(
         cleanup_stats = await resource_manager.cleanup_all()
         logger.debug(f"Статистика очистки: {cleanup_stats}")
 
+    if successful_count == len(urls):
+        logger.info("Все запрошенные изображения успешно скачаны!")
+    else:
+        logger.warning(
+            "Скачивание завершено. Успешно скачано %d из %d изображений",
+            successful_count,
+            len(urls),
+        )
+
+
+async def run_download_session_with_pause(
+    urls: List[str],
+    start_index: int = 1000,
+    retries: int = 3,
+    enable_pause_resume: bool = True,
+) -> None:
+    """
+    Запускает сессию скачивания с поддержкой паузы/возобновления.
+    
+    Основная функция для массового скачивания с возможностью 
+    приостановки и возобновления процесса.
+    
+    Args:
+        urls: Список URL-адресов изображений
+        start_index: Начальный индекс для нумерации файлов
+        retries: Количество повторных попыток
+        enable_pause_resume: Включить поддержку паузы/возобновления
+    
+    Returns:
+        None: Функция ничего не возвращает
+    
+    Features:
+        - Пауза по Ctrl+C, повторное нажатие для возобновления
+        - Сохранение состояния сессии в JSON
+        - Мониторинг ресурсов и автоочистка
+        - Детальная статистика скачивания
+    """
+    if not urls:
+        logger.warning("Не передано ни одного URL для скачивания.")
+        return
+    
+    # Инициализация менеджера ресурсов
+    resource_manager = get_resource_manager()
+    initial_memory = resource_manager.get_memory_usage()
+    logger.info(
+        f"Начальное использование памяти: {initial_memory.get('rss_mb', 0):.1f} MB"
+    )
+    
+    target_dir = IMAGE_DIR / DEFAULT_DOWNLOAD_DIR_NAME
+    await create_dir(target_dir)
+    
+    logger.info(
+        "%d URL для обработки. Изображения будут сохранены в '%s'",
+        len(urls),
+        target_dir,
+    )
+    
+    if enable_pause_resume:
+        logger.info("🔄 Режим паузы/возобновления включен")
+        # Проверяем, есть ли сохраненная сессия
+        session_manager = get_session_manager()
+        existing_session = await session_manager.load_session()
+        
+        if existing_session:
+            remaining_urls = session_manager.get_remaining_urls()
+            if remaining_urls:
+                stats = session_manager.get_session_stats()
+                logger.info(
+                    f"🔄 Найдена незавершенная сессия! "
+                    f"Осталось: {len(remaining_urls)} из {stats['total_urls']}"
+                )
+                # Продолжаем с оставшимися URL
+                urls = remaining_urls
+    
+    try:
+        async with AsyncSession() as session:
+            successful_count = await download_images_with_session(
+                session=session,
+                urls=urls,
+                target_dir=target_dir,
+                start_index=start_index,
+                retries=retries,
+                enable_pause_resume=enable_pause_resume
+            )
+    finally:
+        # Очистка ресурсов после завершения
+        final_memory = resource_manager.get_memory_usage()
+        memory_used = final_memory.get('rss_mb', 0) - initial_memory.get('rss_mb', 0)
+        
+        if memory_used > 50:  # Логируем только значительные изменения
+            logger.info(f"Использовано памяти за сессию: {memory_used:.1f} MB")
+        
+        # Выполняем очистку временных файлов
+        cleanup_stats = await resource_manager.cleanup_all()
+        logger.debug(f"Статистика очистки: {cleanup_stats}")
+    
     if successful_count == len(urls):
         logger.info("Все запрошенные изображения успешно скачаны!")
     else:

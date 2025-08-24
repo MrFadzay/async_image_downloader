@@ -7,7 +7,7 @@ from typing import Any, Callable, Coroutine
 
 import questionary
 
-from core.downloader import run_download_session
+from core.downloader import run_download_session, run_download_session_with_pause
 from core.duplicates import (
     handle_duplicates,
     uniquify_all_images,
@@ -15,6 +15,8 @@ from core.duplicates import (
 )
 from utils.logger import logger
 from utils.validation import validate_download_request
+from utils.user_guidance import UserGuidance, show_context_sensitive_help
+from utils.error_handling import get_error_handler
 
 
 def _clean_path_string(path_str: str) -> str:
@@ -88,6 +90,11 @@ async def _handle_new_download_session() -> None:
 
     if not urls:
         logger.warning("Не найдено корректных URL или все URL некорректны.")
+        print("
+🔍 Помощь по вводу URL:")
+        print("   ✅ Правильные URL: https://example.com/image.jpg")
+        print("   ✅ Поддерживаемые протоколы: https://, http://")
+        print("   ❌ Недопустимые: file://, ftp://, локальные IP")
         return
 
     total_urls = len(urls)
@@ -136,17 +143,37 @@ async def _handle_new_download_session() -> None:
         return
     retries = int(retries_str)
 
+    # Спрашиваем о включении паузы/возобновления
+    enable_pause_resume = await questionary.confirm(
+        "Включить поддержку паузы/возобновления? (Пауза по Ctrl+C)",
+        default=True
+    ).ask_async()
+    
+    if enable_pause_resume is None:
+        logger.warning("Операция отменена.")
+        return
+
     logger.info("\nСводка параметров скачивания:")
     logger.info(f"* Количество URL: {total_urls}")
     logger.info(f"* Начальный индекс: {start_index}")
     logger.info(f"* Количество попыток: {retries}")
+    logger.info(f"* Пауза/возобновление: {'Да' if enable_pause_resume else 'Нет'}")
 
     logger.info("\nНачинаю скачивание...")
-    await run_download_session(
-        urls=urls,
-        start_index=start_index,
-        retries=retries
-    )
+    
+    if enable_pause_resume:
+        await run_download_session_with_pause(
+            urls=urls,
+            start_index=start_index,
+            retries=retries,
+            enable_pause_resume=True
+        )
+    else:
+        await run_download_session(
+            urls=urls,
+            start_index=start_index,
+            retries=retries
+        )
 
 
 async def _process_directory_action(
@@ -157,6 +184,13 @@ async def _process_directory_action(
     Универсальный обработчик для действий с директориями.
     Запрашивает путь, проверяет его и выполняет переданное действие.
     """
+    print(f"
+📁 {prompt_message}")
+    print("📝 Полезные советы:")
+    print("   • Можно ввести как абсолютный, так и относительный путь")
+    print("   • Поддерживаются пути с кириллицей и пробелами")
+    print("   • Пример: ./images или C:/Users/Name/Pictures")
+    
     dir_path_str = await questionary.path(prompt_message).ask_async()
 
     if dir_path_str:
@@ -164,11 +198,45 @@ async def _process_directory_action(
         try:
             path_obj = Path(dir_path_str)
             if not path_obj.exists():
-                logger.error(f"Директория '{dir_path_str}' не существует.")
+                print(f"
+❌ Ошибка: Директория '{dir_path_str}' не существует")
+                print("📝 Помощь:")
+                print("   • Проверьте правописание пути")
+                print("   • Убедитесь, что директория создана")
+                print("   • Попробуйте использовать абсолютный путь")
                 return
+                
+            if not path_obj.is_dir():
+                print(f"
+❌ Ошибка: '{dir_path_str}' не является директорией")
+                print("📝 Помощь: Укажите путь к папке, а не к файлу")
+                return
+            
+            # Показываем информацию о директории
+            try:
+                files = list(path_obj.glob("*"))
+                image_files = [f for f in files if f.suffix.lower() in ['.jpg', '.jpeg', '.png', '.webp', '.gif']]
+                print(f"
+📊 Информация о директории:")
+                print(f"   📁 Путь: {path_obj.absolute()}")
+                print(f"   📄 Всего файлов: {len(files)}")
+                print(f"   🖼️ Изображений: {len(image_files)}")
+                
+                if len(image_files) == 0:
+                    UserGuidance.show_help_for_issue("no_images_found")
+                    return
+            except PermissionError:
+                print(f"
+⚠️ Предупреждение: Нет прав для чтения директории")
+                UserGuidance.show_help_for_issue("permission_denied")
+                return
+            
             await action_function(path_obj)
         except Exception as e:
-            logger.error(f"Ошибка при обработке пути '{dir_path_str}': {e}")
+            error_handler = get_error_handler()
+            error_handler.handle_file_error(e, Path(dir_path_str), "directory_processing")
+    else:
+        print("❌ Операция отменена")
 
 
 async def _handle_duplicates_menu() -> None:
@@ -202,6 +270,8 @@ async def run_interactive_mode() -> None:
     обработкой дубликатов и уникализацией изображений.
     Циклически отображает меню до выбора пользователем опции «Выход».
     """
+    # Показываем приветствие для новых пользователей
+    UserGuidance.show_welcome_message()
     while True:
         command = await questionary.select(
             "Что вы хотите сделать?",
@@ -214,10 +284,14 @@ async def run_interactive_mode() -> None:
         ).ask_async()
 
         if command == "Скачать изображения":
+            UserGuidance.show_operation_tips("download")
             await _handle_new_download_session()
         elif command == "Работа с дубликатами":
+            UserGuidance.show_operation_tips("find_duplicates")
             await _handle_duplicates_menu()
         elif command == "Уникализация":
+            UserGuidance.show_operation_tips("uniquify_all")
+            UserGuidance.show_safety_warning("uniquify_all")
             await _process_directory_action(
                 "Укажите путь к директории для уникализации всех изображений:",
                 uniquify_all_images

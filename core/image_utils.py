@@ -19,6 +19,7 @@ from utils.config import (
     SUPPORTED_IMAGE_EXTENSIONS,
 )
 from utils.logger import logger
+from utils.error_handling import get_error_handler
 from utils.validation import validate_image_size, validate_file_extension
 
 
@@ -251,7 +252,11 @@ def process_and_save_image_sync(
         image.save(full_path, format="JPEG", quality=95)
 
     except Exception as e:
-        # Логируем первые 50 байт данных и content_type для отладки
+        # Обрабатываем ошибку с помощью улучшенного обработчика
+        error_handler = get_error_handler()
+        error_handler.handle_image_error(e, full_path, "image_processing")
+        
+        # Дополнительная информация для отладки
         logger.error(
             f"Ошибка при обработке изображения '{full_path.name}': {e}. "
             f"Content-Type: '{content_type}'. Первые байты: {image_data[:50]!r}"

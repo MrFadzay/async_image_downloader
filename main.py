@@ -19,7 +19,7 @@ if getattr(sys, 'frozen', False):
     import certifi
     os.environ['SSL_CERT_FILE'] = certifi.where()
     os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
-from core.downloader import run_download_session
+from core.downloader import run_download_session, run_download_session_with_pause
 from core.duplicates import (
     handle_duplicates,
     uniquify_all_images,
@@ -27,6 +27,39 @@ from core.duplicates import (
 )
 from ui.cli import run_interactive_mode
 from utils.logger import logger
+from utils.config_manager import load_or_create_config, get_config
+
+# Глобальный флаг для пропуска подтверждений
+_SKIP_CONFIRMATIONS = False
+
+
+def set_skip_confirmations(skip: bool) -> None:
+    """Устанавливает глобальный флаг пропуска подтверждений."""
+    global _SKIP_CONFIRMATIONS
+    _SKIP_CONFIRMATIONS = skip
+
+
+def get_skip_confirmations() -> bool:
+    """Возвращает текущее состояние флага пропуска подтверждений."""
+    return _SKIP_CONFIRMATIONS
+
+
+async def _handle_duplicates_with_confirm(directory: Path, skip_confirm: bool) -> None:
+    """Обработчик поиска дубликатов с учетом флага подтверждения."""
+    set_skip_confirmations(skip_confirm)
+    await handle_duplicates(directory)
+
+
+async def _handle_uniquify_duplicates_with_confirm(directory: Path, skip_confirm: bool) -> None:
+    """Обработчик уникализации дубликатов с учетом флага подтверждения."""
+    set_skip_confirmations(skip_confirm)
+    await uniquify_duplicates(directory)
+
+
+async def _handle_uniquify_all_with_confirm(directory: Path, skip_confirm: bool) -> None:
+    """Обработчик уникализации всех изображений с учетом флага подтверждения."""
+    set_skip_confirmations(skip_confirm)
+    await uniquify_all_images(directory)
 
 
 def create_argument_parser() -> argparse.ArgumentParser:
@@ -69,12 +102,22 @@ def create_argument_parser() -> argparse.ArgumentParser:
         default=3,
         help="Количество повторных попыток при ошибках (по умолчанию: 3).",
     )
+    p_download.add_argument(
+        "--enable-pause-resume",
+        action="store_true",
+        help="Включить поддержку паузы/возобновления (пауза по Ctrl+C).",
+    )
 
     p_find = subparsers.add_parser(
         "find-duplicates",
         help="Find and rename duplicate images."
     )
     p_find.add_argument("directory", type=Path, help="Directory to process.")
+    p_find.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Автоматически подтвердить все вопросы (без интерактивных диалогов)."
+    )
 
     p_uniq = subparsers.add_parser(
         "uniquify",
@@ -83,6 +126,11 @@ def create_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     p_uniq.add_argument("directory", type=Path, help="Directory to process.")
+    p_uniq.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Автоматически подтвердить все вопросы (без интерактивных диалогов)."
+    )
 
     p_uniq_all = subparsers.add_parser(
         "uniquify-all", help="Uniquify all images in directory."
@@ -91,6 +139,11 @@ def create_argument_parser() -> argparse.ArgumentParser:
         "directory",
         type=Path,
         help="Directory to process."
+    )
+    p_uniq_all.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Автоматически подтвердить все вопросы (без интерактивных диалогов)."
     )
 
     return parser
@@ -110,17 +163,29 @@ def handle_cli_command(args: argparse.Namespace) -> Optional[Coroutine[Any, Any,
         Coroutine или None: Корутина для выполнения или None для неизвестных команд
     """
     if args.command == "download":
-        return run_download_session(
-            urls=args.urls,
-            start_index=args.start_index,
-            retries=args.retries
-        )
+        if hasattr(args, 'enable_pause_resume') and args.enable_pause_resume:
+            return run_download_session_with_pause(
+                urls=args.urls,
+                start_index=args.start_index,
+                retries=args.retries,
+                enable_pause_resume=True
+            )
+        else:
+            return run_download_session(
+                urls=args.urls,
+                start_index=args.start_index,
+                retries=args.retries
+            )
     elif args.command == "find-duplicates":
-        return handle_duplicates(args.directory)
+        # Устанавливаем флаг пропуска подтверждения
+        skip_confirm = getattr(args, 'yes', False)
+        return _handle_duplicates_with_confirm(args.directory, skip_confirm)
     elif args.command == "uniquify":
-        return uniquify_duplicates(args.directory)
+        skip_confirm = getattr(args, 'yes', False)
+        return _handle_uniquify_duplicates_with_confirm(args.directory, skip_confirm)
     elif args.command == "uniquify-all":
-        return uniquify_all_images(args.directory)
+        skip_confirm = getattr(args, 'yes', False)
+        return _handle_uniquify_all_with_confirm(args.directory, skip_confirm)
 
     return None
 
@@ -132,6 +197,9 @@ def main() -> None:
     Автоматически выбирает между CLI режимом (при наличии аргументов)
     и интерактивным режимом (без аргументов). Отслеживает время выполнения.
     """
+    # Загружаем конфигурацию приложения
+    config = load_or_create_config()
+    logger.info(f"Используется конфигурация версии {config.version}")
     if len(sys.argv) > 1:
         # ----- РЕЖИМ С АРГУМЕНТАМИ (ДЛЯ АВТОМАТИЗАЦИИ) -----
         parser = create_argument_parser()
