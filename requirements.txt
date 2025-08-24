@@ -7,6 +7,7 @@ questionary>=2.0.0
 psutil>=5.9.0
 tqdm>=4.65.0
 certifi>=2023.0.0
+PyYAML>=6.0.0
 
 # Для сборки .exe (опционально)
 pyinstaller>=6.0.0
