@@ -140,7 +140,7 @@ class ProgressTracker:
         total: int, 
         description: str = "Обработка",
         session_manager: Optional["DownloadSessionManager"] = None
-    ) -> PausableProgressBar:
+    ) -> "PausableProgressBar":
         """
         Создает приостанавливаемый прогресс-бар.
         

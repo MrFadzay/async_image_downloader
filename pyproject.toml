@@ -1,3 +1,107 @@
+[build-system]
+# Modern Python packaging build system
+requires = ["setuptools>=61.0", "wheel", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# Project metadata for modern Python packaging
+name = "async-image-downloader"
+version = "2.1.1"
+description = "Asynchronous image downloader and duplicate processor"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "mrfadzay"},
+]
+maintainers = [
+    {name = "mrfadzay"},
+]
+keywords = [
+    "async", "asyncio", "image", "downloader", "download", 
+    "duplicate", "detection", "processing", "batch", "bulk",
+    "perceptual", "hash", "curl", "cli", "tool", "utility",
+    "seo", "content", "management", "automation"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Utilities",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+]
+
+# Dependencies
+dependencies = [
+    "curl_cffi[aio]>=0.5.0",
+    "aiofiles>=23.0.0",
+    "Pillow>=10.0.0",
+    "imagehash>=4.3.0",
+    "questionary>=2.0.0",
+    "psutil>=5.9.0",
+    "tqdm>=4.65.0",
+    "certifi>=2023.0.0",
+    "PyYAML>=6.0.0",
+]
+
+# Optional dependencies
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "pytest-timeout>=2.1.0",
+    "types-aiofiles>=23.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+]
+build = [
+    "pyinstaller>=6.0.0",
+    "wheel>=0.40.0",
+    "twine>=4.0.0",
+    "build>=0.10.0",
+]
+docs = [
+    "sphinx>=6.0.0",
+    "sphinx-rtd-theme>=1.2.0",
+    "myst-parser>=1.0.0",
+]
+all = [
+    "async-image-downloader[dev,build,docs]",
+]
+
+# Project URLs
+[project.urls]
+Homepage = "https://github.com/mrfadzay/async_image_downloader"
+Repository = "https://github.com/mrfadzay/async_image_downloader.git"
+"Bug Tracker" = "https://github.com/mrfadzay/async_image_downloader/issues"
+Documentation = "https://github.com/mrfadzay/async_image_downloader/blob/main/README.md"
+Changelog = "https://github.com/mrfadzay/async_image_downloader/blob/main/CHANGELOG.md"
+
+# Entry points
+[project.scripts]
+async-image-downloader = "main:main"
+image-downloader = "main:main"
+async-img-dl = "main:main"
+
+[tool.setuptools]
+# Package discovery for setuptools
+packages = ["core", "ui", "utils"]
+
 [tool.pytest.ini_options]
 # Pytest configuration for async image downloader
 

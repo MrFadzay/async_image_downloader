@@ -94,6 +94,32 @@ class AppConfig:
         if not self.created_at:
             self.created_at = datetime.now().isoformat()
         self.updated_at = datetime.now().isoformat()
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Конвертирует конфигурацию в словарь."""
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'AppConfig':
+        """Создает конфигурацию из словаря."""
+        # Создаем экземпляры подконфигураций
+        config_data = data.copy()
+        
+        # Обрабатываем каждую секцию
+        sections = {
+            'download': DownloadConfig,
+            'paths': PathConfig,
+            'validation': ValidationConfig,
+            'duplicates': DuplicateConfig,
+            'ui': UIConfig,
+            'resources': ResourceConfig
+        }
+        
+        for section_name, section_class in sections.items():
+            if section_name in config_data and isinstance(config_data[section_name], dict):
+                config_data[section_name] = section_class(**config_data[section_name])
+        
+        return cls(**config_data)
 
 
 class ConfigManager:
@@ -139,7 +165,7 @@ class ConfigManager:
         
         return None
     
-    def load_config(self, config_file: Optional[Path] = None) -> bool:
+    def load_config(self, config_file: Optional[Path] = None) -> AppConfig:
         """
         Загружает конфигурацию из файла.
         
@@ -147,7 +173,7 @@ class ConfigManager:
             config_file: Путь к файлу конфигурации (опционально)
             
         Returns:
-            bool: True если конфигурация успешно загружена
+            AppConfig: Загруженная конфигурация или конфигурация по умолчанию
         """
         if config_file:
             self.config_file = config_file
@@ -156,7 +182,7 @@ class ConfigManager:
             
         if not self.config_file or not self.config_file.exists():
             logger.info("Файл конфигурации не найден, используется конфигурация по умолчанию")
-            return False
+            return self.config
             
         try:
             with open(self.config_file, 'r', encoding='utf-8') as f:
@@ -167,12 +193,12 @@ class ConfigManager:
             
             self.config = self._merge_config(data)
             logger.info(f"Конфигурация загружена из {self.config_file}")
-            return True
+            return self.config
             
         except Exception as e:
             logger.error(f"Ошибка при загрузке конфигурации из {self.config_file}: {e}")
             logger.info("Используется конфигурация по умолчанию")
-            return False
+            return self.config
     
     def _merge_config(self, data: Dict[str, Any]) -> AppConfig:
         """
@@ -229,17 +255,21 @@ class ConfigManager:
             logger.error(f"Ошибка при объединении конфигурации: {e}")
             return self._create_default_config()
     
-    def save_config(self, config_file: Optional[Path] = None, format_type: str = "yaml") -> bool:
+    def save_config(self, config: Optional[AppConfig] = None, config_file: Optional[Path] = None, format_type: str = "yaml") -> bool:
         """
         Сохраняет конфигурацию в файл.
         
         Args:
+            config: Конфигурация для сохранения (опционально, по умолчанию текущая)
             config_file: Путь к файлу (опционально)
             format_type: Формат файла ('yaml' или 'json')
             
         Returns:
             bool: True если конфигурация успешно сохранена
         """
+        # Используем переданную конфигурацию или текущую
+        config_to_save = config or self.config
+        
         if config_file:
             self.config_file = config_file
         elif not self.config_file:
@@ -248,10 +278,10 @@ class ConfigManager:
             
         try:
             # Обновляем время изменения
-            self.config.updated_at = datetime.now().isoformat()
+            config_to_save.updated_at = datetime.now().isoformat()
             
             # Конвертируем в словарь
-            config_dict = asdict(self.config)
+            config_dict = config_to_save.to_dict()
             
             # Сохраняем в файл
             with open(self.config_file, 'w', encoding='utf-8') as f:

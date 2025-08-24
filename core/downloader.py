@@ -57,10 +57,28 @@ async def handle_and_save_response(
     url: str,
     min_size: int = 100,
 ) -> bool:
+    """
+    Обрабатывает и сохраняет ответ с изображением с улучшенной обработкой ошибок.
+    
+    Args:
+        image_data: Данные изображения
+        headers: HTTP заголовки ответа
+        full_path: Путь для сохранения файла
+        url: Исходный URL для логирования
+        min_size: Минимальный размер файла в байтах
+        
+    Returns:
+        bool: True если файл успешно сохранен, False при ошибке
+    """
     content_type = headers.get('content-type', '').lower()
     
     # Проверяем MIME-тип
     if not validate_mime_type(content_type):
+        logger.warning(
+            "Неподдерживаемый MIME-тип для %s: %s",
+            url,
+            content_type
+        )
         return False
         
     # Проверяем на HTML/JSON ответы
@@ -75,6 +93,11 @@ async def handle_and_save_response(
         
     # Проверяем размер файла
     if not validate_file_size(len(image_data)):
+        logger.warning(
+            "Размер файла превышает лимиты для %s: %d байт",
+            url,
+            len(image_data)
+        )
         return False
         
     if len(image_data) < min_size:
@@ -85,8 +108,22 @@ async def handle_and_save_response(
         )
         return False
         
-    loop = asyncio.get_running_loop()
+    # Создаем директорию если не существует
     try:
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.error(
+            "Не удалось создать директорию %s: %s",
+            full_path.parent,
+            e
+        )
+        return False
+        
+    loop = asyncio.get_running_loop()
+    error_handler = get_error_handler()
+    
+    try:
+        # Выполняем обработку изображения в executor для предотвращения блокировки
         await loop.run_in_executor(
             None,
             process_and_save_image_sync,
@@ -100,12 +137,63 @@ async def handle_and_save_response(
             len(image_data),
         )
         return True
-    except Exception as e:
+        
+    except (OSError, IOError) as e:
+        # Ошибки файловой системы
+        error_handler.handle_file_error(e, full_path, "save_image")
         logger.error(
-            "Ошибка при обработке и сохранении изображения %s: %s",
+            "Ошибка файловой системы при сохранении %s: %s",
+            url,
+            e
+        )
+        return False
+        
+    except MemoryError as e:
+        # Ошибки памяти при обработке больших изображений
+        error_handler.handle_memory_error(e, full_path, len(image_data))
+        logger.error(
+            "Недостаточно памяти для обработки изображения %s (размер: %d байт): %s",
+            url,
+            len(image_data),
+            e
+        )
+        return False
+        
+    except ValueError as e:
+        # Ошибки валидации (размер, формат, etc.)
+        error_handler.handle_validation_error(e, url, "image_validation")
+        logger.error(
+            "Ошибка валидации изображения %s: %s",
+            url,
+            e
+        )
+        return False
+        
+    except Exception as e:
+        # Все остальные неожиданные ошибки
+        error_handler.handle_image_error(e, full_path, "image_processing")
+        logger.error(
+            "Неожиданная ошибка при обработке изображения %s: %s (тип: %s)",
             url,
             e,
+            type(e).__name__
         )
+        
+        # Попытка сохранить как неизвестный файл для отладки
+        try:
+            unknown_path = full_path.with_suffix('.unknown')
+            with open(unknown_path, 'wb') as f:
+                f.write(image_data)
+            logger.info(
+                "Сохранен как неизвестный файл для анализа: %s",
+                unknown_path
+            )
+        except Exception as save_error:
+            logger.error(
+                "Не удалось сохранить файл для отладки: %s",
+                save_error
+            )
+        
         return False
 
 # Скачивает одно изображение
