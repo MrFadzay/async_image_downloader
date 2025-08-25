@@ -28,7 +28,7 @@ jobs:
         pip install pyinstaller
 
     - name: Build with PyInstaller
-      run: python -m pyinstaller --onefile --name async_image_downloader_single main.py 
+      run: pyinstaller --onefile --name async_image_downloader_single main.py 
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
