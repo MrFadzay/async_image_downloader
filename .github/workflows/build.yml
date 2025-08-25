@@ -27,7 +27,7 @@ jobs:
         pip install -r requirements.txt
 
     - name: Build with PyInstaller
-      run: python -m PyInstaller async_image_downloader.spec
+      run: python -m pyinstaller --onefile --name async_image_downloader_single main.py 
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
